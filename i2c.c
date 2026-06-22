@@ -170,6 +170,21 @@ void I2C_init(I2C_HandleTypeDef *hi2c)
         I2C = I2C3;
     }
 
+    /* ----- CCR configuration ----- */
+
+    // set the bit 15 to 0 (Sm mode I2C)
+    I2C->CCR &= ~(1 << 15);
+
+    // set the CCR [11:0] to 80 = 0x50, since CCR = T_high / T_pclk1
+    // where T_high = 5000 ns, T_pclk1 = 62.5 ns (1 / 16 000 000)
+
+    // clear the range 11:0
+    // 111111111111 = 0xFF
+    I2C->CCR &= ~(0xFFF << 0);
+
+    // set the range to 0x50
+    I2C->CCR |= (0x50 << 0);
+
     // set FREQ[5:0] (Peripheral clock frequency) in CR2
     // clear the bits
     // 111111 = 2^5 + 2^4 + 2^3 + 2^2 + 2^1 + 2^0 = 32 + 16 + 8 + 4 + 2 + 1 = 48 + 15 = 63 = 0x3F
@@ -178,4 +193,15 @@ void I2C_init(I2C_HandleTypeDef *hi2c)
     // set the bits
     // 16 MHz = 010000 = 0x10
     I2C->CR2 |= (0x10 << 0);
+
+    // ----- CR1 configuration ----- //
+
+    // set bit 0 PE (Peripheral enabled) to 1
+
+    I2C->CR1 |= (1 << 0);
+
+    // set bit 10 ACK (Acknowledge enable) to 1
+    // since this bit is set and cleared by software and cleared by hardware when PE = 0
+    // it is enabled after PE became 1
+    I2C->CR1 |= (1 << 10);
 }
