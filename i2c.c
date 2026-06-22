@@ -1,4 +1,5 @@
 #include <stdint.h>
+#include <stdio.h>
 #include "i2c.h"
 #include "stm32f411.h"
 
@@ -40,15 +41,25 @@ static uint8_t I2C_Validate_Pins(I2C_HandleTypeDef *hi2c)
 
 void I2C_init(I2C_HandleTypeDef *hi2c)
 {
-    if (hi2c->channel >= I2C_CHANNEL_MAX)
+    if ((hi2c->channel >= I2C_CHANNEL_MAX) || !I2C_Validate_Pins(hi2c))
     {
         return;
     }
 
-    if (!I2C_Validate_Pins(hi2c))
+    /* ----- I2C Choosing ----- */
+    if (hi2c->channel == 1)
     {
-        return;
+        hi2c->Instance = I2C1;
     }
+    else if (hi2c->channel == 2)
+    {
+        hi2c->Instance = I2C2;
+    }
+    else
+    {
+        hi2c->Instance = I2C3;
+    }
+    /* ----- I2C Choosing ----- */
 
     switch (hi2c->channel)
     {
@@ -155,22 +166,10 @@ void I2C_init(I2C_HandleTypeDef *hi2c)
     hi2c->scl_port->OTYPER |= (1 << hi2c->scl_pin);
     hi2c->sda_port->OTYPER |= (1 << hi2c->sda_pin);
 
-    I2C_RegDef_t *I2C;
-    /* ----- I2C Configuration ----- */
-    if (hi2c->channel == 1)
-    {
-        I2C = I2C1;
-    }
-    else if (hi2c->channel == 2)
-    {
-        I2C = I2C2;
-    }
-    else
-    {
-        I2C = I2C3;
-    }
+    /* ----- I2C CCR configuration ----- */
 
-    /* ----- CCR configuration ----- */
+    // declare a local I2C var to simplify the naming
+    I2C_RegDef_t *I2C = hi2c->Instance;
 
     // set the bit 15 to 0 (Sm mode I2C)
     I2C->CCR &= ~(1 << 15);
@@ -194,6 +193,17 @@ void I2C_init(I2C_HandleTypeDef *hi2c)
     // 16 MHz = 010000 = 0x10
     I2C->CR2 |= (0x10 << 0);
 
+    /* ----- TRISE configuration ----- */
+    // set the bits 5:0 to 17 = 0x11
+    // 1000 ns / 62.5 + 1 = 16 + 1 = 17
+
+    // clear the range
+    // 111111 = 2^5 + 2^4 + 2^3 + 2^2 + 2^1 + 2^0 = 32 + 16 + 8 + 4 + 2 + 1 = 40 + 20 + 3 = 63 = 0x3F
+    I2C->TRISE &= ~(0x3F << 0);
+
+    // set the range to 0x11
+    I2C->TRISE |= (0x11 << 0);
+
     // ----- CR1 configuration ----- //
 
     // set bit 0 PE (Peripheral enabled) to 1
@@ -204,4 +214,48 @@ void I2C_init(I2C_HandleTypeDef *hi2c)
     // since this bit is set and cleared by software and cleared by hardware when PE = 0
     // it is enabled after PE became 1
     I2C->CR1 |= (1 << 10);
+}
+
+void I2C_Master_Transmit(I2C_HandleTypeDef *hi2c, uint8_t slave_addr, uint8_t *data, uint8_t length)
+{
+    if (hi2c == NULL || hi2c->Instance == NULL || data == NULL || length == 0)
+    {
+        return;
+    }
+
+    // declare a local I2C var to simplify the naming
+    I2C_RegDef_t *I2C = hi2c->Instance;
+
+    // start the transaction by issuing START (set to 1)
+    I2C->CR1 |= (1 << 8);
+    // START is cleared by hardware when start is sent
+
+    while (!(I2C->SR1 & (1 << 0)))
+        ; // polling the SB (Start bit)
+    // when exit, the bit is set, start condition generated
+
+    // write the slave address to the DR register (it will start sending the bits to the slave and clear the SB bit)
+    // 7 bit slave address + W (Write) bit 0
+    I2C->DR = (slave_addr << 1) & ~0x01; // 0x01 = 2^0 = 1 = (1 << 0)
+
+    // polling the ADDR (Address sent) bit
+    // the bit is set after the ACK of the byte
+    while (!(I2C->SR1 & (1 << 1)))
+    {
+        uint32_t sr1_snap = I2C->SR1;
+
+        // check the bit 10 Acknowledge failure (the peripheral is disconnected, powered off or missing)
+        // the bit 9 ARLO (Arbitration lost) (the another master seized the bus)
+        // the bit 8 BERR (Bus error) (an external glitch happened)
+        if (sr1_snap & ((1 << 10) | (1 << 9) | (1 << 8)))
+        {
+            // clear the error flags by writing 0 to them
+            I2C->SR1 &= ~((1 << 10) | (1 << 9) | (1 << 8));
+
+            // generate the STOP condition to release the physical lines safely
+            I2C->CR1 |= (1 << 9);
+
+            return;
+        }
+    }
 }

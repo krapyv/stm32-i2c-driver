@@ -16,8 +16,11 @@ typedef struct
     GPIO_RegDef_t *sda_port;
     uint8_t scl_pin;
     uint8_t sda_pin;
+
+    I2C_RegDef_t *Instance;
 } I2C_HandleTypeDef;
 
 void I2C_init(I2C_HandleTypeDef *hi2c);
+void I2C_Master_Transmit(I2C_HandleTypeDef *hi2c, uint8_t slave_addr, uint8_t *data, uint8_t length);
 
 #endif
