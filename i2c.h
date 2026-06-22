@@ -3,17 +3,21 @@
 
 typedef enum
 {
-    I2C_CHANNEL_1 = 1, // SCL1 - PA6, SDA1 = PB7
+    I2C_CHANNEL_1 = 1, // SCL1 - PB6, SDA1 = PB7
     I2C_CHANNEL_2,     // SCL2 - PB10, SDA2 - PB3
-    I2C_CHANNEL_3,     // SCL3 - PB8, SDA3 - PB3
+    I2C_CHANNEL_3,     // SCL3 - PA8, SDA3 - PB4
     I2C_CHANNEL_MAX
 } I2C_Channel_t;
 
 typedef struct
 {
     I2C_Channel_t channel;
+    GPIO_RegDef_t *scl_port;
+    GPIO_RegDef_t *sda_port;
+    uint8_t scl_pin;
+    uint8_t sda_pin;
 } I2C_HandleTypeDef;
 
-void I2C_init(void);
+void I2C_init(I2C_HandleTypeDef *hi2c);
 
 #endif
