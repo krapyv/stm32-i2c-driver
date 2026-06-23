@@ -226,6 +226,10 @@ void I2C_Master_Transmit(I2C_HandleTypeDef *hi2c, uint8_t slave_addr, uint8_t *d
     // declare a local I2C var to simplify the naming
     I2C_RegDef_t *I2C = hi2c->Instance;
 
+    // wait until the bus is completely idle (BUSY = 0)
+    while (I2C->SR2 & (1 << 1))
+        ;
+
     // start the transaction by issuing START (set to 1)
     I2C->CR1 |= (1 << 8);
     // START is cleared by hardware when start is sent
@@ -258,4 +262,176 @@ void I2C_Master_Transmit(I2C_HandleTypeDef *hi2c, uint8_t slave_addr, uint8_t *d
             return;
         }
     }
+
+    // read the SR1 and SR2 to clear the ADDR bit in the SR1
+    uint32_t dummy = I2C->SR1;
+    dummy = I2C->SR2;
+    (void)dummy; // preventing the compiler warnings of an unused variable
+
+    // ensure we are the Master (MSL, bit 0 = 1) and Transmitter (TRA, bit 2 = 1)
+    // 0b0101 = 2^2 + 2^0 = 4 + 1 = 5 = 0x05
+    if ((I2C->SR2 & ((1 << 2) | (1 << 0))) != 0x05)
+    {
+        // if we enter this if body, the hardware is desynchronized
+        // force STOP
+        I2C->CR1 |= (1 << 9);
+        return;
+    }
+
+    for (uint8_t i = 0; i < length; i++)
+    {
+        // polling the TxE Transmitters Data register empty
+        // goes high after every byte leaves the DR
+        while (!(I2C->SR1 & (1 << 7)))
+            ;
+
+        I2C->DR = data[i];
+    }
+
+    // before sending the STOP condition
+    // we need to make sure the byte has left the shift register, so we are not going to corrupt the last byte mid-sending
+    while (!(I2C->SR1 & (1 << 2)))
+        ; // polling the Byte transfer finished
+
+    // issuing the Stop generation
+    I2C->CR1 |= (1 << 9);
+
+    return;
+}
+
+void I2C_Master_Receive(I2C_HandleTypeDef *hi2c, uint8_t slave_addr, uint8_t *data, uint8_t length)
+{
+    if (hi2c == NULL || data == NULL || length == 0)
+    {
+        return;
+    }
+
+    // declare a local I2C var to simplify the naming
+    I2C_RegDef_t *I2C = hi2c->Instance;
+
+    // wait until the bus is completely idle (BUSY = 0)
+    while (I2C->SR2 & (1 << 1))
+        ;
+
+    // Master issues the Start
+    I2C->CR1 |= (1 << 8);
+    // hardware clears it after the start is sent
+
+    // poll the SB
+    while (!(I2C->SR1 & (1 << 0)))
+        ;
+
+    // write a peripheral address to the DR (it clears the SB flag in the SR1 since we have already read the SR1)
+    // since we want to read data bytes from the peripheral, we are setting the bit 0 (R) as 0x01 = 1
+    I2C->DR = (slave_addr << 1) | (0x01 << 0);
+
+    // poll the ADDR
+    // hardware sets it to 1 after the ACK of the byte, so after the peripheral has acknowledged its address
+    while (!(I2C->SR1 & (1 << 1)))
+    {
+        uint32_t sr1_snap = I2C->SR1;
+
+        // checking the AF, ARLO and BERR error flags
+        if (sr1_snap & ((1 << 10) | (1 << 9) | (1 << 8)))
+        {
+            // clear the error flags by writing 0s to them
+            I2C->SR1 &= ~((1 << 10) | (1 << 9) | (1 << 8));
+
+            // generate STOP condition to release the physical lines safely
+            I2C->CR1 |= (1 << 9);
+
+            return;
+        }
+    }
+
+    /* ----- ONE-BYTE SCENARIO ----- */
+    if (length == 1)
+    {
+        // we have already polled ADDR
+
+        // clear the ACK (Bit 10 CR1)
+        I2C->CR1 &= ~(1 << 10);
+    }
+    /* ----- ONE-BYTE SCENARIO ----- */
+
+    // read the SR1 and SR2 to clear the ADDR bit in the SR1
+    uint32_t dummy = I2C->SR1;
+    dummy = I2C->SR2;
+    (void)dummy; // preventing the compiler warnings of an unused variable
+
+    // ensure we are the Master (MSL, bit 0 = 1) and Receiver (TRA, bit 2 = 0)
+    // 0b0100 = 2^2 = 4 = 0x04
+    if ((I2C->SR2 & ((1 << 2) | (1 << 0))) != 0x04)
+    {
+        // if we enter this if body, the hardware is desynchronized
+        // force STOP
+        I2C->CR1 |= (1 << 9);
+        return;
+    }
+
+    /* ----- ONE-BYTE SCENARIO ----- */
+    if (length == 1)
+    {
+        // set STOP condition
+        I2C->CR1 |= (1 << 9);
+
+        // poll RxNE bit 6 to wait until the data byte arrives
+        while (!(I2C->SR1 & (1 << 6)))
+            ;
+
+        *data = I2C->DR;
+
+        // enable ACK
+        I2C->CR1 |= (1 << 10);
+
+        // the first and simultaneously the last byte of data has been received, so exit the function
+        return;
+    }
+    /* ----- ONE-BYTE SCENARIO ----- */
+
+    for (uint8_t i = 0; i < length; i++)
+    {
+        // check if we are about to handle the second-to-last byte
+        if (i == length - 2)
+        {
+            // if so, we need to clear ACK bit in CR1 to prevent the peripheral to send us unwanted bytes
+            I2C->CR1 &= ~(1 << 10);
+        }
+
+        // wait for a byte from the peripheral (poll RxNE Bit 6)
+        while (!(I2C->SR1 & (1 << 6)))
+        {
+            uint32_t sr1_snap = I2C->SR1;
+
+            // check for the error flags
+            // OVR bit 11, AF bit 10, ARLO bit 9, BERR bit 8
+            if (sr1_snap & ((1 << 11) | (1 << 10) | (1 << 9) | (1 << 8)))
+            {
+                // if there are errors, clear the flags by writing 0 to them
+                I2C->SR1 &= ~((1 << 11) | (1 << 10) | (1 << 9) | (1 << 8));
+
+                // issue the STOP condition to release physical wires safely
+                I2C->CR1 |= (1 << 9);
+
+                // re-enable ACK for the next transaction
+                I2C->CR1 |= (1 << 10);
+
+                return;
+            }
+        }
+
+        data[i] = I2C->DR;
+
+        // check if we have handled the second-to-last byte
+        if (i == length - 2)
+        {
+            // if so, the last byte is already clocking in, so we need to issue the STOP condition
+            I2C->CR1 |= (1 << 9);
+        }
+    }
+
+    // after the data was received and the STOP issue was issued, re-enble the ACK
+    I2C->CR1 |= (1 << 10);
+
+    return;
 }
