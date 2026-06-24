@@ -238,6 +238,11 @@ void I2C_Master_Transmit(I2C_HandleTypeDef *hi2c, uint8_t slave_addr, uint8_t *d
         ; // polling the SB (Start bit)
     // when exit, the bit is set, start condition generated
 
+    // clear the SB bit 0 in SR1
+    // by reading the SR1 and then writing the DR with the slave's address
+    uint32_t dummy = I2C->SR1;
+    (void)dummy;
+
     // write the slave address to the DR register (it will start sending the bits to the slave and clear the SB bit)
     // 7 bit slave address + W (Write) bit 0
     I2C->DR = (slave_addr << 1) & ~0x01; // 0x01 = 2^0 = 1 = (1 << 0)
@@ -264,7 +269,7 @@ void I2C_Master_Transmit(I2C_HandleTypeDef *hi2c, uint8_t slave_addr, uint8_t *d
     }
 
     // read the SR1 and SR2 to clear the ADDR bit in the SR1
-    uint32_t dummy = I2C->SR1;
+    dummy = I2C->SR1;
     dummy = I2C->SR2;
     (void)dummy; // preventing the compiler warnings of an unused variable
 
@@ -321,7 +326,11 @@ void I2C_Master_Receive(I2C_HandleTypeDef *hi2c, uint8_t slave_addr, uint8_t *da
     while (!(I2C->SR1 & (1 << 0)))
         ;
 
-    // write a peripheral address to the DR (it clears the SB flag in the SR1 since we have already read the SR1)
+    // clear the SB bit 0 in SR1 by readimg the SR1 and then writing the DR with the slave's address
+    uint32_t dummy = I2C->SR1;
+    (void)dummy;
+
+    // write a peripheral address to the DR
     // since we want to read data bytes from the peripheral, we are setting the bit 0 (R) as 0x01 = 1
     I2C->DR = (slave_addr << 1) | (0x01 << 0);
 
@@ -355,13 +364,13 @@ void I2C_Master_Receive(I2C_HandleTypeDef *hi2c, uint8_t slave_addr, uint8_t *da
     /* ----- ONE-BYTE SCENARIO ----- */
 
     // read the SR1 and SR2 to clear the ADDR bit in the SR1
-    uint32_t dummy = I2C->SR1;
+    dummy = I2C->SR1;
     dummy = I2C->SR2;
     (void)dummy; // preventing the compiler warnings of an unused variable
 
     // ensure we are the Master (MSL, bit 0 = 1) and Receiver (TRA, bit 2 = 0)
-    // 0b0100 = 2^2 = 4 = 0x04
-    if ((I2C->SR2 & ((1 << 2) | (1 << 0))) != 0x04)
+    // 0b0001 = 2^0 = 1 = 0x01
+    if ((I2C->SR2 & ((1 << 2) | (1 << 0))) != 0x01)
     {
         // if we enter this if body, the hardware is desynchronized
         // force STOP
@@ -432,6 +441,254 @@ void I2C_Master_Receive(I2C_HandleTypeDef *hi2c, uint8_t slave_addr, uint8_t *da
 
     // after the data was received and the STOP issue was issued, re-enble the ACK
     I2C->CR1 |= (1 << 10);
+
+    return;
+}
+
+void I2C_Master_Transmit_Receive(I2C_HandleTypeDef *hi2c, uint8_t slave_addr, uint8_t *pSend, uint8_t *pReceive, uint8_t send_length, uint8_t receive_length)
+{
+    if (hi2c == NULL || pSend == NULL || pReceive == NULL || send_length == 0 || receive_length == 0)
+    {
+        return;
+    }
+
+    // declare a local I2C var to simplify the naming
+    I2C_RegDef_t *I2C = hi2c->Instance;
+
+    // wait until the bus is completely idle (BUSY == 0)
+    while (I2C->SR2 & (1 << 1))
+        ;
+
+    // Master issues the Start condition
+    I2C->CR1 |= (1 << 8);
+    // the hardware clears this bit when the start is sent
+
+    // poll the SB bit 0 in SR1
+    while (!(I2C->SR1 & (1 << 0)))
+        ;
+
+    // clear the SB bit by reading the SR1 and writing the DR register
+    uint32_t dummy = I2C->SR1;
+    (void)dummy;
+
+    /* ----- WRITE PART ----- */
+
+    // write the slave's address (7 bits) + the bit 0 of 0 (Writing) (the Master sending bytes over line to the slave)
+    I2C->DR = (slave_addr << 1) & ~(0x01 << 0);
+
+    // poll the ADDR bit 1 in SR1
+    // it is set by hardware when the peripheral acknowledges its address
+    uint32_t sr1_snap = I2C->SR1;
+
+    while (!(sr1_snap & (1 << 1)))
+    {
+        // check for the error flags
+        if (sr1_snap & ((1 << 10) | (1 << 9) | (1 << 8)))
+        {
+            // if there are errors, clear the error flags by writing 0 to them
+            I2C->SR1 &= ~((1 << 10) | (1 << 9) | (1 << 8));
+
+            // generate STOP condition to gracefuly and safely release the lines
+            I2C->CR1 |= (1 << 9);
+
+            return;
+        }
+        sr1_snap = I2C->SR1;
+    }
+
+    // clear the ADDR bit
+    dummy = I2C->SR1;
+    dummy = I2C->SR2;
+    (void)dummy;
+
+    // ensure we are the Master (MSL, bit 0 = 1) and Transmitter (TRA, bit 2 = 1)
+    // 0b0101 = 2^2 + 2^0 = 4 + 1 = 5 = 0x05
+    if ((I2C->SR2 & ((1 << 2) | (1 << 0))) != 0x05)
+    {
+        // if we enter this if body, the hardware is desynchronized
+        // force STOP
+        I2C->CR1 |= (1 << 9);
+        return;
+    }
+
+    // send the data
+    for (uint8_t i = 0; i < send_length; i++)
+    {
+        // poll the TxE Data register empty (transmitters)
+        while (!(I2C->SR1 & (1 << 7)))
+            ;
+
+        I2C->DR = pSend[i];
+    }
+
+    // poll the BTF bit 2 in SR1
+    // to prevent corrupting the byte that could be still in the shift registers
+    while (!(I2C->SR1 & (1 << 2)))
+    {
+        uint32_t sr1_snap = I2C->SR1;
+
+        // check for the error flags
+        if (sr1_snap & ((1 << 10) | (1 << 9) | (1 << 8)))
+        {
+            // if there are errors, clear the error flags by writing 0 to them
+            I2C->SR1 &= ~((1 << 10) | (1 << 9) | (1 << 8));
+
+            // generate STOP condition to gracefuly and safely release the lines
+            I2C->CR1 |= (1 << 9);
+
+            return;
+        }
+    }
+
+    /* ----- WRITE PART ----- */
+
+    /* ----- READ PART ----- */
+    // generate the Repeated start
+    // by setting the START bit 8 in CR1 to 1
+    I2C->CR1 |= (1 << 8);
+
+    while (!(I2C->SR1 & (1 << 0)))
+        ;
+
+    // clear the SB bit 0 by reading the SR1 and writing to the DR
+    dummy = I2C->SR1;
+    (void)dummy;
+
+    // write to the DR a slave's address (7 bits) + last bit 0 as 1 (R) becasue the Master wants to read the data from the slave
+    I2C->DR = (slave_addr << 1) | (0x01 << 0);
+
+    // poll the ADDR bit 1 in SR1
+    while (!(I2C->SR1 & (1 << 1)))
+    {
+        uint32_t sr1_snap = I2C->SR1;
+
+        // check for the error flags
+        if (sr1_snap & ((1 << 10) | (1 << 9) | (1 << 8)))
+        {
+            // if there are errors, clear the error flags by writing 0 to them
+            I2C->SR1 &= ~((1 << 10) | (1 << 9) | (1 << 8));
+
+            // generate STOP condition to gracefuly and safely release the lines
+            I2C->CR1 |= (1 << 9);
+
+            return;
+        }
+    }
+
+    /* ---------- ONE-BYTE SCENARIO ---------- */
+    if (receive_length == 1)
+    {
+        // immediately after the ADDR bit hits, clear the ACK bit in the CR1 to prevent the peripheral from eventual sending of unwanted bytes
+        I2C->CR1 &= ~(1 << 10);
+    }
+    /* ---------- ONE-BYTE SCENARIO ---------- */
+
+    /* ---------- SHARED ADDR CLEARING ---------- */
+    // clear the ADDR bit 1 in SR1
+    dummy = I2C->SR1;
+    dummy = I2C->SR2;
+
+    // ensure we are the Master (MSL, bit 0 = 1) and Receiver (TRA, bit 2 = 0)
+    // 0b0001 = 2^0 = 1 = 0x01
+    if ((I2C->SR2 & ((1 << 2) | (1 << 0))) != 0x01)
+    {
+        // if we enter this if body, the hardware is desynchronized
+        // force STOP
+        I2C->CR1 |= (1 << 9);
+        return;
+    }
+
+    /* ---------- SHARED ADDR CLEARING ---------- */
+
+    /* ---------- ONE-BYTE SCENARIO ---------- */
+    if (receive_length == 1)
+    {
+        // generate the STOP condition to prevent the peripheral from sending unwanted bytes after the one we are asking for
+        I2C->CR1 |= (1 << 9);
+
+        // poll the RxNE
+        // exits when the byte arrives
+        while (!(I2C->SR1 & (1 << 6)))
+        {
+            uint32_t sr1_snap = I2C->SR1;
+
+            // check for the error flags
+            // OVR, AF, ARLO, BERR
+            if (sr1_snap & ((1 << 11) | (1 << 10) | (1 << 9) | (1 << 8)))
+            {
+                // if there are errors, clear the error flags by writing 0 to them
+                I2C->SR1 &= ~((1 << 11) | (1 << 10) | (1 << 9) | (1 << 8));
+
+                // generate STOP condition to gracefuly and safely release the lines
+                I2C->CR1 |= (1 << 9);
+
+                // re-enable the ACK bit in CR1
+                I2C->CR1 |= (1 << 10);
+
+                return;
+            }
+        }
+
+        // once the byte arrives, read it to our variable
+        *pReceive = I2C->DR;
+
+        // re-enable the ACK bit in CR1 for the next transaction
+        I2C->CR1 |= (1 << 10);
+
+        return;
+    }
+
+    /* ---------- MULTI-BYTE SCENARIO ----------*/
+
+    // read the data
+    for (uint8_t i = 0; i < receive_length; i++)
+    {
+        // check if the current byte is the second-to-last
+        // to clear the ACK bit in CR1
+        if (i == receive_length - 2)
+        {
+            I2C->CR1 &= ~(1 << 10);
+        }
+
+        // poll the RxNE to track when the byte arrives
+        while (!(I2C->SR1 & (1 << 6)))
+        {
+            uint32_t sr1_snap = I2C->SR1;
+
+            // check for the error flags
+            // OVR, AF, ARLO, BERR
+            if (sr1_snap & ((1 << 11) | (1 << 10) | (1 << 9) | (1 << 8)))
+            {
+                // if there are errors, clear the error flags by writing 0 to them
+                I2C->SR1 &= ~((1 << 11) | (1 << 10) | (1 << 9) | (1 << 8));
+
+                // generate STOP condition to gracefuly and safely release the lines
+                I2C->CR1 |= (1 << 9);
+
+                // re-enable the ACK bit in CR1
+                I2C->CR1 |= (1 << 10);
+
+                return;
+            }
+        }
+
+        // once the byte arrived, read it to the array
+        pReceive[i] = I2C->DR;
+
+        // check if the current byte is the second-to-last
+        // to generate the STOP condition in CR1 after the last byte
+        if (i == receive_length - 2)
+        {
+            I2C->CR1 |= (1 << 9);
+        }
+    }
+
+    // after all bytes have been read, re-enable the ACK bit in CR1
+    I2C->CR1 |= (1 << 10);
+
+    /* ---------- MULTI-BYTE SCENARIO ----------*/
+
+    /* ----- READ PART ----- */
 
     return;
 }
