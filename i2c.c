@@ -227,21 +227,60 @@ void I2C_Master_Transmit(I2C_HandleTypeDef *hi2c, uint8_t slave_addr, uint8_t *d
     I2C_RegDef_t *I2C = hi2c->Instance;
 
     // wait until the bus is completely idle (BUSY = 0)
-    while (I2C->SR2 & (1 << 1))
-        ;
+    while (1)
+    {
+        uint32_t sr1_snap = I2C->SR1;
+
+        // firstly, check the error flags
+        if (sr1_snap & ((1 << 10) | (1 << 9) | (1 << 8)))
+        {
+            // if there are errors, clear the error flags by writing 0 to them
+            I2C->SR1 &= ~((1 << 10) | (1 << 9) | (1 << 8));
+
+            // generate STOP condition to gracefuly and safely release the lines
+            I2C->CR1 |= (1 << 9);
+
+            return;
+        }
+
+        if (!(I2C->SR2 & (1 << 1)))
+        {
+            // if the BUSY bit is 0, exit the loop
+            break;
+        }
+    }
 
     // start the transaction by issuing START (set to 1)
     I2C->CR1 |= (1 << 8);
     // START is cleared by hardware when start is sent
 
-    while (!(I2C->SR1 & (1 << 0)))
-        ; // polling the SB (Start bit)
+    // polling the SB (Start bit)
     // when exit, the bit is set, start condition generated
+    while (1)
+    {
+        uint32_t sr1_snap = I2C->SR1;
 
-    // clear the SB bit 0 in SR1
-    // by reading the SR1 and then writing the DR with the slave's address
-    uint32_t dummy = I2C->SR1;
-    (void)dummy;
+        // firstly, check the error flags
+        if (sr1_snap & ((1 << 10) | (1 << 9) | (1 << 8)))
+        {
+            // if there are errors, clear the error flags by writing 0 to them
+            I2C->SR1 &= ~((1 << 10) | (1 << 9) | (1 << 8));
+
+            // generate STOP condition to gracefuly and safely release the lines
+            I2C->CR1 |= (1 << 9);
+
+            return;
+        }
+
+        // secondly, check the SB bit
+        if (sr1_snap & (1 << 0))
+        {
+            // if the SB bit is set, exit the loop
+            break;
+        }
+    }
+    // SB is cleared by reading SR1 (done in the poll above) + writing DR
+    // SR1 read is already consumed by the polling loop - writing DR now completes the clear
 
     // write the slave address to the DR register (it will start sending the bits to the slave and clear the SB bit)
     // 7 bit slave address + W (Write) bit 0
@@ -249,7 +288,7 @@ void I2C_Master_Transmit(I2C_HandleTypeDef *hi2c, uint8_t slave_addr, uint8_t *d
 
     // polling the ADDR (Address sent) bit
     // the bit is set after the ACK of the byte
-    while (!(I2C->SR1 & (1 << 1)))
+    while (1)
     {
         uint32_t sr1_snap = I2C->SR1;
 
@@ -258,19 +297,26 @@ void I2C_Master_Transmit(I2C_HandleTypeDef *hi2c, uint8_t slave_addr, uint8_t *d
         // the bit 8 BERR (Bus error) (an external glitch happened)
         if (sr1_snap & ((1 << 10) | (1 << 9) | (1 << 8)))
         {
-            // clear the error flags by writing 0 to them
+            // if there are errors, clear the error flags by writing 0 to them
             I2C->SR1 &= ~((1 << 10) | (1 << 9) | (1 << 8));
 
-            // generate the STOP condition to release the physical lines safely
+            // generate STOP condition to gracefuly and safely release the lines
             I2C->CR1 |= (1 << 9);
 
             return;
         }
+
+        // secondly, check the ADDR bit
+        if (sr1_snap & (1 << 1))
+        {
+            // if the ADDR bit is set, exit the loop
+            break;
+        }
     }
 
     // read the SR1 and SR2 to clear the ADDR bit in the SR1
-    dummy = I2C->SR1;
-    dummy = I2C->SR2;
+    // SR1 read is already consumed by the polling loop above - reading SR2 now completes the clear
+    uint32_t dummy = I2C->SR2;
     (void)dummy; // preventing the compiler warnings of an unused variable
 
     // ensure we are the Master (MSL, bit 0 = 1) and Transmitter (TRA, bit 2 = 1)
@@ -287,16 +333,59 @@ void I2C_Master_Transmit(I2C_HandleTypeDef *hi2c, uint8_t slave_addr, uint8_t *d
     {
         // polling the TxE Transmitters Data register empty
         // goes high after every byte leaves the DR
-        while (!(I2C->SR1 & (1 << 7)))
-            ;
+        while (1)
+        {
+            uint32_t sr1_snap = I2C->SR1;
+
+            // firstly, check the error flags
+            if (sr1_snap & ((1 << 10) | (1 << 9) | (1 << 8)))
+            {
+                // if there are errors, clear the error flags by writing 0 to them
+                I2C->SR1 &= ~((1 << 10) | (1 << 9) | (1 << 8));
+
+                // generate STOP condition to gracefuly and safely release the lines
+                I2C->CR1 |= (1 << 9);
+
+                return;
+            }
+
+            // secondly, check the TxE Data register empty (transmitters)
+            if (sr1_snap & (1 << 7))
+            {
+                // if the TxE is set, exit the loop
+                break;
+            }
+        }
 
         I2C->DR = data[i];
     }
 
     // before sending the STOP condition
     // we need to make sure the byte has left the shift register, so we are not going to corrupt the last byte mid-sending
-    while (!(I2C->SR1 & (1 << 2)))
-        ; // polling the Byte transfer finished
+    // polling the Byte transfer finished
+    while (1)
+    {
+        uint32_t sr1_snap = I2C->SR1;
+
+        // firstly, check the error flags
+        if (sr1_snap & ((1 << 10) | (1 << 9) | (1 << 8)))
+        {
+            // if there are errors, clear the error flags by writing 0 to them
+            I2C->SR1 &= ~((1 << 10) | (1 << 9) | (1 << 8));
+
+            // generate STOP condition to gracefuly and safely release the lines
+            I2C->CR1 |= (1 << 9);
+
+            return;
+        }
+
+        // secondly, check the BTF
+        if (sr1_snap & (1 << 2))
+        {
+            // if the BTF is set, exit the loop
+            break;
+        }
+    }
 
     // issuing the Stop generation
     I2C->CR1 |= (1 << 9);
@@ -315,20 +404,60 @@ void I2C_Master_Receive(I2C_HandleTypeDef *hi2c, uint8_t slave_addr, uint8_t *da
     I2C_RegDef_t *I2C = hi2c->Instance;
 
     // wait until the bus is completely idle (BUSY = 0)
-    while (I2C->SR2 & (1 << 1))
-        ;
+    while (1)
+    {
+        uint32_t sr1_snap = I2C->SR1;
+
+        // firstly, check the error flags
+        if (sr1_snap & ((1 << 10) | (1 << 9) | (1 << 8)))
+        {
+            // if there are errors, clear the error flags by writing 0 to them
+            I2C->SR1 &= ~((1 << 10) | (1 << 9) | (1 << 8));
+
+            // generate STOP condition to gracefuly and safely release the lines
+            I2C->CR1 |= (1 << 9);
+
+            return;
+        }
+
+        if (!(I2C->SR2 & (1 << 1)))
+        {
+            // if the BUSY bit is 0, exit the loop
+            break;
+        }
+    }
 
     // Master issues the Start
     I2C->CR1 |= (1 << 8);
     // hardware clears it after the start is sent
 
-    // poll the SB
-    while (!(I2C->SR1 & (1 << 0)))
-        ;
+    // poll the SB bit 0 in SR1
+    while (1)
+    {
+        uint32_t sr1_snap = I2C->SR1;
+
+        // firstly, check the error flags
+        if (sr1_snap & ((1 << 10) | (1 << 9) | (1 << 8)))
+        {
+            // if there are errors, clear the error flags by writing 0 to them
+            I2C->SR1 &= ~((1 << 10) | (1 << 9) | (1 << 8));
+
+            // generate STOP condition to gracefuly and safely release the lines
+            I2C->CR1 |= (1 << 9);
+
+            return;
+        }
+
+        // secondly, check the SB bit
+        if (sr1_snap & (1 << 0))
+        {
+            // if the SB bit is set, exit the loop
+            break;
+        }
+    }
 
     // clear the SB bit 0 in SR1 by readimg the SR1 and then writing the DR with the slave's address
-    uint32_t dummy = I2C->SR1;
-    (void)dummy;
+    // SR1 read is consumed in the loop above, so the DR write completes a clear
 
     // write a peripheral address to the DR
     // since we want to read data bytes from the peripheral, we are setting the bit 0 (R) as 0x01 = 1
@@ -336,20 +465,27 @@ void I2C_Master_Receive(I2C_HandleTypeDef *hi2c, uint8_t slave_addr, uint8_t *da
 
     // poll the ADDR
     // hardware sets it to 1 after the ACK of the byte, so after the peripheral has acknowledged its address
-    while (!(I2C->SR1 & (1 << 1)))
+    while (1)
     {
         uint32_t sr1_snap = I2C->SR1;
 
-        // checking the AF, ARLO and BERR error flags
+        // firstly, check the error flags
         if (sr1_snap & ((1 << 10) | (1 << 9) | (1 << 8)))
         {
-            // clear the error flags by writing 0s to them
+            // if there are errors, clear the error flags by writing 0 to them
             I2C->SR1 &= ~((1 << 10) | (1 << 9) | (1 << 8));
 
-            // generate STOP condition to release the physical lines safely
+            // generate STOP condition to gracefuly and safely release the lines
             I2C->CR1 |= (1 << 9);
 
             return;
+        }
+
+        // secondly, check the ADDR bit
+        if (sr1_snap & (1 << 1))
+        {
+            // if the ADDR bit is set, exit the loop
+            break;
         }
     }
 
@@ -364,8 +500,8 @@ void I2C_Master_Receive(I2C_HandleTypeDef *hi2c, uint8_t slave_addr, uint8_t *da
     /* ----- ONE-BYTE SCENARIO ----- */
 
     // read the SR1 and SR2 to clear the ADDR bit in the SR1
-    dummy = I2C->SR1;
-    dummy = I2C->SR2;
+    // SR1 read is consumed in the ADDR polling loop, so SR2 read completes a clear
+    uint32_t dummy = I2C->SR2;
     (void)dummy; // preventing the compiler warnings of an unused variable
 
     // ensure we are the Master (MSL, bit 0 = 1) and Receiver (TRA, bit 2 = 0)
@@ -384,9 +520,33 @@ void I2C_Master_Receive(I2C_HandleTypeDef *hi2c, uint8_t slave_addr, uint8_t *da
         // set STOP condition
         I2C->CR1 |= (1 << 9);
 
-        // poll RxNE bit 6 to wait until the data byte arrives
-        while (!(I2C->SR1 & (1 << 6)))
-            ;
+        // wait for a byte from the peripheral (poll RxNE Bit 6)
+        while (1)
+        {
+            uint32_t sr1_snap = I2C->SR1;
+
+            // firstly, check the error flags
+            if (sr1_snap & ((1 << 11) | (1 << 10) | (1 << 9) | (1 << 8)))
+            {
+                // if there are errors, clear the error flags by writing 0 to them
+                I2C->SR1 &= ~((1 << 11) | (1 << 10) | (1 << 9) | (1 << 8));
+
+                // generate STOP condition to gracefuly and safely release the lines
+                I2C->CR1 |= (1 << 9);
+
+                // re-enable ACK for the next transaction
+                I2C->CR1 |= (1 << 10);
+
+                return;
+            }
+
+            // secondly, check the RxNE bit
+            if (sr1_snap & (1 << 6))
+            {
+                // if the RxNE bit is set, exit the loop
+                break;
+            }
+        }
 
         *data = I2C->DR;
 
@@ -408,24 +568,30 @@ void I2C_Master_Receive(I2C_HandleTypeDef *hi2c, uint8_t slave_addr, uint8_t *da
         }
 
         // wait for a byte from the peripheral (poll RxNE Bit 6)
-        while (!(I2C->SR1 & (1 << 6)))
+        while (1)
         {
             uint32_t sr1_snap = I2C->SR1;
 
-            // check for the error flags
-            // OVR bit 11, AF bit 10, ARLO bit 9, BERR bit 8
+            // firstly, check the error flags
             if (sr1_snap & ((1 << 11) | (1 << 10) | (1 << 9) | (1 << 8)))
             {
-                // if there are errors, clear the flags by writing 0 to them
+                // if there are errors, clear the error flags by writing 0 to them
                 I2C->SR1 &= ~((1 << 11) | (1 << 10) | (1 << 9) | (1 << 8));
 
-                // issue the STOP condition to release physical wires safely
+                // generate STOP condition to gracefuly and safely release the lines
                 I2C->CR1 |= (1 << 9);
 
                 // re-enable ACK for the next transaction
                 I2C->CR1 |= (1 << 10);
 
                 return;
+            }
+
+            // secondly, check the RxNE bit
+            if (sr1_snap & (1 << 6))
+            {
+                // if the RxNE bit is set, exit the loop
+                break;
             }
         }
 
@@ -456,8 +622,28 @@ void I2C_Master_Transmit_Receive(I2C_HandleTypeDef *hi2c, uint8_t slave_addr, ui
     I2C_RegDef_t *I2C = hi2c->Instance;
 
     // wait until the bus is completely idle (BUSY == 0)
-    while (I2C->SR2 & (1 << 1))
-        ;
+    while (1)
+    {
+        uint32_t sr1_snap = I2C->SR1;
+
+        // firstly, check the error flags
+        if (sr1_snap & ((1 << 10) | (1 << 9) | (1 << 8)))
+        {
+            // if there are errors, clear the error flags by writing 0 to them
+            I2C->SR1 &= ~((1 << 10) | (1 << 9) | (1 << 8));
+
+            // generate STOP condition to gracefuly and safely release the lines
+            I2C->CR1 |= (1 << 9);
+
+            return;
+        }
+
+        if (!(I2C->SR2 & (1 << 1)))
+        {
+            // if the BUSY bit is 0, exit the loop
+            break;
+        }
+    }
 
     // Master issues the Start condition
     I2C->CR1 |= (1 << 8);
@@ -489,8 +675,7 @@ void I2C_Master_Transmit_Receive(I2C_HandleTypeDef *hi2c, uint8_t slave_addr, ui
     }
 
     // clear the SB bit by reading the SR1 and writing the DR register
-    uint32_t dummy = I2C->SR1;
-    (void)dummy;
+    // SR1 read was done in a polling loop above, so the next DR writing completes the clear
 
     /* ----- WRITE PART ----- */
 
@@ -528,8 +713,9 @@ void I2C_Master_Transmit_Receive(I2C_HandleTypeDef *hi2c, uint8_t slave_addr, ui
     }
 
     // clear the ADDR bit
-    dummy = I2C->SR1;
-    dummy = I2C->SR2;
+    // SR1 read was done in the poll loop above, so only SR2 read remained to complete the clear
+    uint32_t dummy = I2C->SR2;
+    (void)dummy;
 
     // ensure we are the Master (MSL, bit 0 = 1) and Transmitter (TRA, bit 2 = 1)
     // 0b0101 = 2^2 + 2^0 = 4 + 1 = 5 = 0x05
@@ -631,8 +817,7 @@ void I2C_Master_Transmit_Receive(I2C_HandleTypeDef *hi2c, uint8_t slave_addr, ui
     }
 
     // clear the SB bit 0 by reading the SR1 and writing to the DR
-    dummy = I2C->SR1;
-    (void)dummy;
+    // SR1 read is consumed in the loop above, so the DR writing completes a clear
 
     // write to the DR a slave's address (7 bits) + last bit 0 as 1 (R) becasue the Master wants to read the data from the slave
     I2C->DR = (slave_addr << 1) | (0x01 << 0);
@@ -670,6 +855,19 @@ void I2C_Master_Transmit_Receive(I2C_HandleTypeDef *hi2c, uint8_t slave_addr, ui
     }
     /* ---------- ONE-BYTE SCENARIO ---------- */
 
+    /* ---------- TWO-BYTES SCENARIO ---------- */
+    if (receive_length == 2)
+    {
+        // first of all, set POS (bit 11 in CR1) to 1
+        // POS = 1 - ACK bit controls the (N)ACK of the next byte with is received in the shift register
+        I2C->CR1 |= (1 << 11);
+
+        // clear the ACK (bit 10 in CR1)
+        // to prepare the NACK pulse for the last second byte
+        I2C->CR1 &= ~(1 << 10);
+    }
+    /* ---------- TWO-BYTES SCENARIO ---------- */
+
     /* ---------- SHARED ADDR CLEARING ---------- */
     // clear the ADDR bit 1 in SR1
     dummy = I2C->SR1;
@@ -682,6 +880,13 @@ void I2C_Master_Transmit_Receive(I2C_HandleTypeDef *hi2c, uint8_t slave_addr, ui
         // if we enter this if body, the hardware is desynchronized
         // force STOP
         I2C->CR1 |= (1 << 9);
+
+        // clear POS
+        I2C->CR1 &= ~(1 << 11);
+
+        // re-enable ACK
+        I2C->CR1 |= (1 << 10);
+
         return;
     }
 
@@ -724,27 +929,12 @@ void I2C_Master_Transmit_Receive(I2C_HandleTypeDef *hi2c, uint8_t slave_addr, ui
 
         // once the byte arrives, read it to our variable
         *pReceive = I2C->DR;
-
-        // re-enable the ACK bit in CR1 for the next transaction
-        I2C->CR1 |= (1 << 10);
-
-        return;
     }
 
-    /* ---------- MULTI-BYTE SCENARIO ----------*/
-
-    // read the data
-    for (uint8_t i = 0; i < receive_length; i++)
+    /* ---------- TWO-BYTES SCENARIO ---------- */
+    else if (receive_length == 2)
     {
-        // check if the current byte is the second-to-last
-        // to clear the ACK bit in CR1
-        if (i == receive_length - 2)
-        {
-            I2C->CR1 &= ~(1 << 10);
-        }
-
-        // poll the RxNE
-        // exits when the byte arrives
+        // poll BTF - we need to make sure that both bytes arrived: the first one is in the DR, the second is in the shift register
         while (1)
         {
             uint32_t sr1_snap = I2C->SR1;
@@ -758,35 +948,98 @@ void I2C_Master_Transmit_Receive(I2C_HandleTypeDef *hi2c, uint8_t slave_addr, ui
                 // generate STOP condition to gracefuly and safely release the lines
                 I2C->CR1 |= (1 << 9);
 
+                // after both bytes have been read, clear POS
+                I2C->CR1 &= ~(1 << 11);
+
                 // re-enable the ACK bit in CR1
                 I2C->CR1 |= (1 << 10);
 
                 return;
             }
 
-            // secondly, check the RxNE bit
-            if (sr1_snap & (1 << 6))
+            // secondly, check the BTF bit
+            if (sr1_snap & (1 << 2))
             {
-                // if the RxNE bit is set, exit the loop
+                // if the BTF bit is set (so the DR is full and the shift register is full as well), exit the loop
                 break;
             }
         }
 
-        // once the byte arrived, read it to the array
-        pReceive[i] = I2C->DR;
+        // after the BTF is set, issue the STOP condition to prevent fetching of the third byte
+        I2C->CR1 |= (1 << 9);
 
-        // check if the current byte is the second-to-last
-        // to generate the STOP condition in CR1 after the last byte
-        if (i == receive_length - 2)
+        // read the data
+        for (uint8_t i = 0; i < receive_length; i++)
         {
-            I2C->CR1 |= (1 << 9);
+            // poll
+            while (!(I2C->SR1 & (1 << 6)))
+                ;
+            pReceive[i] = I2C->DR;
         }
     }
+    /* ---------- TWO-BYTES SCENARIO ---------- */
+
+    /* ---------- MULTI-BYTE SCENARIO ----------*/
+    else if (receive_length >= 3)
+    {
+
+        // read the data
+        for (uint8_t i = 0; i < receive_length; i++)
+        {
+            // check if the current byte is the second-to-last
+            // to clear the ACK bit in CR1
+            if (i == receive_length - 2)
+            {
+                I2C->CR1 &= ~(1 << 10);
+            }
+
+            // poll the RxNE
+            // exits when the byte arrives
+            while (1)
+            {
+                uint32_t sr1_snap = I2C->SR1;
+
+                // firstly, check the error flags
+                if (sr1_snap & ((1 << 11) | (1 << 10) | (1 << 9) | (1 << 8)))
+                {
+                    // if there are errors, clear the error flags by writing 0 to them
+                    I2C->SR1 &= ~((1 << 11) | (1 << 10) | (1 << 9) | (1 << 8));
+
+                    // generate STOP condition to gracefuly and safely release the lines
+                    I2C->CR1 |= (1 << 9);
+
+                    // re-enable the ACK bit in CR1
+                    I2C->CR1 |= (1 << 10);
+
+                    return;
+                }
+
+                // secondly, check the RxNE bit
+                if (sr1_snap & (1 << 6))
+                {
+                    // if the RxNE bit is set, exit the loop
+                    break;
+                }
+            }
+
+            // once the byte arrived, read it to the array
+            pReceive[i] = I2C->DR;
+
+            // check if the current byte is the second-to-last
+            // to generate the STOP condition in CR1 after the last byte
+            if (i == receive_length - 2)
+            {
+                I2C->CR1 |= (1 << 9);
+            }
+        }
+    }
+    /* ---------- MULTI-BYTE SCENARIO ----------*/
+
+    // after both bytes have been read, clear POS
+    I2C->CR1 &= ~(1 << 11);
 
     // after all bytes have been read, re-enable the ACK bit in CR1
     I2C->CR1 |= (1 << 10);
-
-    /* ---------- MULTI-BYTE SCENARIO ----------*/
 
     /* ----- READ PART ----- */
 
