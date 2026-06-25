@@ -9,6 +9,16 @@ typedef enum
     I2C_CHANNEL_MAX
 } I2C_Channel_t;
 
+typedef enum
+{
+    I2C_SB_MASK = (1 << 0),
+    I2C_ADDR_MASK = (1 << 1),
+    I2C_TXE_MASK = (1 << 7),
+    I2C_RXNE_MASK = (1 << 6),
+    I2C_BTF_MASK = (1 << 2),
+
+} I2C_Bit_Masks_t;
+
 typedef struct
 {
     I2C_Channel_t channel;
