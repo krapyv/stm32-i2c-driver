@@ -39,6 +39,10 @@ static uint8_t I2C_Validate_Pins(I2C_HandleTypeDef *hi2c)
     return 0;
 }
 
+// TODO: timeout mechanism via hi2c->get_tick_ms function pointer
+// curretly spins indefinitely if hardware becomes unresponsive
+// must be implemented before production use
+
 void I2C_init(I2C_HandleTypeDef *hi2c)
 {
     if ((hi2c->channel >= I2C_CHANNEL_MAX) || !I2C_Validate_Pins(hi2c))
@@ -166,10 +170,21 @@ void I2C_init(I2C_HandleTypeDef *hi2c)
     hi2c->scl_port->OTYPER |= (1 << hi2c->scl_pin);
     hi2c->sda_port->OTYPER |= (1 << hi2c->sda_pin);
 
+    /* ----- explicitly clear the PUPDR for SCL and SDA pins ----- */
+    // since PUPDR give 2 bits per pin, we are using (2 * SCL pin number), (2 * SDA pin number)
+
+    // 11 = 0x3
+    hi2c->scl_port->PUPDR &= ~(0x3 << (2 * hi2c->scl_pin));
+    hi2c->sda_port->PUPDR &= ~(0x3 << (2 * hi2c->sda_pin));
+
     /* ----- I2C CCR configuration ----- */
 
     // declare a local I2C var to simplify the naming
     I2C_RegDef_t *I2C = hi2c->Instance;
+
+    // explicitly disable PE (bit 0 CR1) to prevet undefined hardware behavior
+    // if the PE is already 1 after reboot or SWRST recovery
+    I2C->CR1 &= ~(1 << 0);
 
     // set the bit 15 to 0 (Sm mode I2C)
     I2C->CCR &= ~(1 << 15);
@@ -216,7 +231,7 @@ void I2C_init(I2C_HandleTypeDef *hi2c)
     I2C->CR1 |= (1 << 10);
 }
 
-uint8_t I2C_PollHardwareFlags(I2C_RegDef_t *I2C, I2C_Bit_Masks_t bit_mask)
+static uint8_t I2C_PollHardwareFlags(I2C_RegDef_t *I2C, I2C_Bit_Masks_t bit_mask)
 {
     while (1)
     {
