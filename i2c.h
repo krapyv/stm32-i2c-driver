@@ -1,6 +1,9 @@
 #ifndef I2C_H
 #define I2C_H
 
+#include <stdint.h>
+#include "stm32f411.h"
+
 typedef enum
 {
     I2C_CHANNEL_1 = 1, // SCL1 - PB6, SDA1 = PB7
@@ -36,7 +39,7 @@ typedef struct
     I2C_RegDef_t *Instance;
 } I2C_HandleTypeDef;
 
-void I2C_init(I2C_HandleTypeDef *hi2c);
+void I2C_Init(I2C_HandleTypeDef *hi2c);
 I2C_Status_t I2C_Master_Transmit(I2C_HandleTypeDef *hi2c, uint8_t slave_addr, uint8_t *data, uint8_t length);
 I2C_Status_t I2C_Master_Receive(I2C_HandleTypeDef *hi2c, uint8_t slave_addr, uint8_t *data, uint8_t length);
 I2C_Status_t I2C_Master_Transmit_Receive(I2C_HandleTypeDef *hi2c, uint8_t slave_addr, uint8_t *pSend, uint8_t *pReceive, uint8_t send_length, uint8_t receive_length);

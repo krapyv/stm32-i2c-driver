@@ -43,7 +43,7 @@ static uint8_t I2C_Validate_Pins(I2C_HandleTypeDef *hi2c)
 // curretly spins indefinitely if hardware becomes unresponsive
 // must be implemented before production use
 
-void I2C_init(I2C_HandleTypeDef *hi2c)
+void I2C_Init(I2C_HandleTypeDef *hi2c)
 {
     if ((hi2c->channel >= I2C_CHANNEL_MAX) || !I2C_Validate_Pins(hi2c))
     {
