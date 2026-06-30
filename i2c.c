@@ -692,15 +692,8 @@ I2C_Status_t I2C_Master_Transmit_Receive(I2C_HandleTypeDef *hi2c, uint8_t slave_
     {
 
         // read the data
-        for (uint8_t i = 0; i < receive_length; i++)
+        for (uint8_t i = 0; i < receive_length - 2; i++)
         {
-            // check if the current byte is the second-to-last
-            // to clear the ACK bit in CR1
-            if (i == receive_length - 2)
-            {
-                I2C->CR1 &= ~(1 << 10);
-            }
-
             // poll the RxNE
             // exits when the byte arrives
             if (I2C_PollHardwareFlags(I2C, I2C_RXNE_MASK))
@@ -710,14 +703,30 @@ I2C_Status_t I2C_Master_Transmit_Receive(I2C_HandleTypeDef *hi2c, uint8_t slave_
 
             // once the byte arrived, read it to the array
             pReceive[i] = I2C->DR;
-
-            // check if the current byte is the second-to-last
-            // to generate the STOP condition in CR1 after the last byte
-            if (i == receive_length - 2)
-            {
-                I2C->CR1 |= (1 << 9);
-            }
         }
+
+        // poll the RxNE
+        // exits when the byte arrives
+        if (I2C_PollHardwareFlags(I2C, I2C_BTF_MASK))
+        {
+            return I2C_ERROR;
+        }
+
+        // the current byte is the second-to-last
+        // to clear the ACK bit in CR1
+
+        // since the bytes are ACKed/NACKed only during the transition from the shift register to the DR
+        // after the byte N-2 is the DR and the byte N-1 is in the shift register, the N-1 byte receives ACK/NACK after the DR is free
+        // so we can clear the ACK bit there
+        I2C->CR1 &= ~(1 << 10);
+
+        // once the byte arrived, read it to the array
+        pReceive[receive_length - 2] = I2C->DR;
+
+        // generate the STOP condition in CR1 after the last byte
+        I2C->CR1 |= (1 << 9);
+
+        pReceive[receive_length - 1] = I2C->DR;
     }
     /* ---------- MULTI-BYTE SCENARIO ----------*/
 
