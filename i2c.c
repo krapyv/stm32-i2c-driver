@@ -727,6 +727,10 @@ I2C_Status_t I2C_Master_Transmit_Receive(I2C_HandleTypeDef *hi2c, uint8_t slave_
         I2C->CR1 |= (1 << 9);
 
         pReceive[receive_length - 1] = I2C->DR;
+
+        // wait until the STOP condition is detected by hardware
+        while (I2C->CR1 & (1 << 9))
+            ;
     }
     /* ---------- MULTI-BYTE SCENARIO ----------*/
 
