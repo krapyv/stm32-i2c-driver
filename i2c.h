@@ -28,6 +28,40 @@ typedef enum
     I2C_ERROR = 1
 } I2C_Status_t;
 
+typedef enum
+{
+    I2C_STATE_IDLE = 0,
+    I2C_STATE_ERROR,
+    I2C_STATE_BUS_BUSY,
+    I2C_STATE_TX_ADDR,
+    I2C_STATE_TX_BUSY,
+    I2C_STATE_RX_ADDR,
+    I2C_STATE_RX_BUSY,
+    I2C_STATE_DONE
+} I2C_State_t;
+
+typedef enum
+{
+    I2C_TX = 0,
+    I2C_RX,
+    I2C_TX_RX
+} I2C_Mode_t;
+
+typedef enum
+{
+    I2C_TX_RX_WRITE = 0,
+    I2C_TX_RX_READ
+} I2C_TX_RX_Phase_t;
+
+typedef enum
+{
+    I2C_ERROR_NONE = 0,
+    I2C_ERROR_BERR = (1 << 8),
+    I2C_ERROR_ARLO = (1 << 9),
+    I2C_ERROR_AF = (1 << 10),
+    I2C_ERROR_OVR = (1 << 11)
+} I2C_Error_Code_t;
+
 typedef struct
 {
     I2C_Channel_t channel;
@@ -35,6 +69,19 @@ typedef struct
     GPIO_RegDef_t *sda_port;
     uint8_t scl_pin;
     uint8_t sda_pin;
+    uint8_t slave_add;
+
+    volatile I2C_State_t state;
+    volatile uint8_t index;
+    volatile I2C_Mode_t mode;
+    volatile uint16_t error_code;
+    volatile I2C_TX_RX_Phase_t phase;
+
+    volatile uint8_t *pTxBuffPtr;
+    volatile uint8_t TxLength;
+
+    volatile uint8_t *pRxBuffPtr;
+    volatile uint8_t RxLength;
 
     I2C_RegDef_t *Instance;
 } I2C_HandleTypeDef;
