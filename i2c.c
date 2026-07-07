@@ -3,6 +3,132 @@
 #include "i2c.h"
 #include "stm32f411.h"
 
+void I2C_Reinit(void)
+{
+    // explicitly disable PE (bit 0 CR1) to prevet undefined hardware behavior
+    // if the PE is already 1 after reboot or SWRST recovery
+    hi2c.Instance->CR1 &= ~(1 << 0);
+
+    // set the bit 15 to 0 (Sm mode I2C)
+    hi2c.Instance->CCR &= ~(1 << 15);
+
+    // set the CCR [11:0] to 80 = 0x50, since CCR = T_high / T_pclk1
+    // where T_high = 5000 ns, T_pclk1 = 62.5 ns (1 / 16 000 000)
+
+    // clear the range 11:0
+    // 111111111111 = 0xFF
+    hi2c.Instance->CCR &= ~(0xFFF << 0);
+
+    // set the range to 0x50
+    hi2c.Instance->CCR |= (0x50 << 0);
+
+    // set FREQ[5:0] (Peripheral clock frequency) in CR2
+    // clear the bits
+    // 111111 = 2^5 + 2^4 + 2^3 + 2^2 + 2^1 + 2^0 = 32 + 16 + 8 + 4 + 2 + 1 = 48 + 15 = 63 = 0x3F
+    hi2c.Instance->CR2 &= ~(0x3F << 0);
+
+    // set the bits
+    // 16 MHz = 010000 = 0x10
+    hi2c.Instance->CR2 |= (0x10 << 0);
+
+    /* ----- TRISE configuration ----- */
+    // set the bits 5:0 to 17 = 0x11
+    // 1000 ns / 62.5 + 1 = 16 + 1 = 17
+
+    // clear the range
+    // 111111 = 2^5 + 2^4 + 2^3 + 2^2 + 2^1 + 2^0 = 32 + 16 + 8 + 4 + 2 + 1 = 40 + 20 + 3 = 63 = 0x3F
+    hi2c.Instance->TRISE &= ~(0x3F << 0);
+
+    // set the range to 0x11
+    hi2c.Instance->TRISE |= (0x11 << 0);
+
+    // ----- CR1 configuration ----- //
+
+    // set bit 0 PE (Peripheral enabled) to 1
+
+    hi2c.Instance->CR1 |= (1 << 0);
+
+    // set bit 10 ACK (Acknowledge enable) to 1
+    // since this bit is set and cleared by software and cleared by hardware when PE = 0
+    // it is enabled after PE became 1
+    hi2c.Instance->CR1 |= (1 << 10);
+}
+
+// Events Interrupt Handler (priority 38 - cannot be preempted by I2C1_ER)
+void I2C1_EV_IRQHandler(void)
+{
+    return;
+}
+
+// Error Interrupts Handler (priority 39 - can be preempted by I2C1_EV)
+void I2C1_ER_IRQHandler(void)
+{
+    // disable interrupts
+    __disable_irq();
+
+    // populate the error_code
+
+    // make snapshot of current state of SR1
+    uint16_t sr1_snap = hi2c.Instance->SR1;
+
+    // isolate the errors bits 11:8 and assigning to the error_code
+    // 0b00001111 = 2^3 + 2^2 + 2^1 + 2^0 = 8 + 4 + 2 + 1 = 15 = 0xF
+    hi2c.error_code = (sr1_snap & ((uint16_t)0xF << 8));
+
+    // error code checking branches
+    if (hi2c.error_code & I2C_ERROR_BERR)
+    {
+        // needs SWRST hard reset
+
+        // since I immediately enable SWRST, there is no explicit SR1 error flag clearing
+        // the SR1 flags cleared immediately by SWRST
+
+        // set SWRST to 1
+        hi2c.Instance->CR1 |= (1 << 15);
+    }
+    else if (hi2c.error_code & I2C_ERROR_ARLO)
+    {
+        // needs to wait until the current transmission is over because the another master seized the bus
+
+        // clear the SR1 ARLO error flag
+        hi2c.Instance->SR1 &= ~(1 << 9);
+
+        // no stop issuing since the microcontroller is no longer a master
+    }
+    else if (hi2c.error_code & I2C_ERROR_AF)
+    {
+        // needs to issue STOP and then try the communication again
+
+        // make snapshot of current CR1
+        uint16_t cr1_snap = hi2c.Instance->CR1;
+
+        // clear the SR1 AF error flag
+        hi2c.Instance->SR1 &= ~(1 << 10);
+
+        // issue STOP condition
+
+        uint32_t cr1_modified = cr1_snap;
+
+        // set the STOP bit to 1
+        cr1_modified |= (1 << 9);
+        // set the ACK bit to 1
+        cr1_modified |= (1 << 10);
+        // clear the POS bit
+        cr1_modified &= ~(1 << 11);
+
+        // direct write of the modified CR1 to I2C->CR1
+        hi2c.Instance->CR1 = cr1_modified;
+    }
+
+    // set the state to ERROR
+    hi2c.state = I2C_STATE_ERROR;
+
+    // enable interrupts
+    __enable_irq();
+
+    return;
+}
+
 static uint8_t I2C_Validate_Pins(I2C_HandleTypeDef *hi2c)
 {
     if (hi2c->channel == I2C_CHANNEL_1)

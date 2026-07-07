@@ -4,6 +4,9 @@
 #include <stdint.h>
 #include "stm32f411.h"
 
+// get "a link" of the variable that has been declared globally in another file in the project scope
+extern I2C_HandleTypeDef hi2c;
+
 typedef enum
 {
     I2C_CHANNEL_1 = 1, // SCL1 - PB6, SDA1 = PB7
@@ -59,7 +62,7 @@ typedef enum
     I2C_ERROR_BERR = (1 << 8),
     I2C_ERROR_ARLO = (1 << 9),
     I2C_ERROR_AF = (1 << 10),
-    I2C_ERROR_OVR = (1 << 11)
+    // I2C_ERROR_OVR = (1 << 11)
 } I2C_Error_Code_t;
 
 typedef struct
