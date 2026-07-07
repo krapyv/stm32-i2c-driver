@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include "i2c.h"
 #include "stm32f411.h"
+#include "core_cm4.h"
 
 void I2C_Reinit(void)
 {
@@ -31,6 +32,17 @@ void I2C_Reinit(void)
     // 16 MHz = 010000 = 0x10
     hi2c.Instance->CR2 |= (0x10 << 0);
 
+    /* ----- Interrupts enablement (CR2) -----*/
+
+    // set ITERREN (Error interrupt enable) Bit 8 to 1
+    hi2c.Instance->CR2 |= (1 << 8);
+
+    // set ITEVTEN (Event interrupt enable) Bit 9 to 1
+    hi2c.Instance->CR2 |= (1 << 9);
+
+    // set ITERREN (Buffer interrupt enable) Bit 10 to 1
+    hi2c.Instance->CR2 |= (1 << 10);
+
     /* ----- TRISE configuration ----- */
     // set the bits 5:0 to 17 = 0x11
     // 1000 ns / 62.5 + 1 = 16 + 1 = 17
@@ -57,6 +69,28 @@ void I2C_Reinit(void)
 // Events Interrupt Handler (priority 38 - cannot be preempted by I2C1_ER)
 void I2C1_EV_IRQHandler(void)
 {
+    // if the state is ERROR, return
+    if (hi2c.state == I2C_STATE_ERROR)
+    {
+        return;
+    }
+
+    // make snapshot of current state of SR2
+    switch (hi2c.mode)
+    {
+    case I2C_TX:
+        break;
+
+    case I2C_RX:
+        break;
+
+    case I2C_TX_RX:
+        break;
+
+    default:
+        break;
+    }
+
     return;
 }
 
@@ -85,6 +119,13 @@ void I2C1_ER_IRQHandler(void)
 
         // set SWRST to 1
         hi2c.Instance->CR1 |= (1 << 15);
+
+        // clear the pending EV interrupt
+        // I2C1_EV has a position of 31
+        // one ICPR has 32 Interrupt-related bits (0...31)
+
+        // with NVIC the write-1-to-clear is the tool that allows to prevent race conditions if another interrupt fires mid-execution
+        NVIC->ICPR[0] = (1 << 31);
     }
     else if (hi2c.error_code & I2C_ERROR_ARLO)
     {
@@ -333,6 +374,17 @@ void I2C_Init(I2C_HandleTypeDef *hi2c)
     // set the bits
     // 16 MHz = 010000 = 0x10
     I2C->CR2 |= (0x10 << 0);
+
+    /* ----- Interrupts enablement (CR2) -----*/
+
+    // set ITERREN (Error interrupt enable) Bit 8 to 1
+    I2C->CR2 |= (1 << 8);
+
+    // set ITEVTEN (Event interrupt enable) Bit 9 to 1
+    I2C->CR2 |= (1 << 9);
+
+    // set ITERREN (Buffer interrupt enable) Bit 10 to 1
+    I2C->CR2 |= (1 << 10);
 
     /* ----- TRISE configuration ----- */
     // set the bits 5:0 to 17 = 0x11
