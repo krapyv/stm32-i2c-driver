@@ -32,17 +32,6 @@ void I2C_Reinit(void)
     // 16 MHz = 010000 = 0x10
     hi2c.Instance->CR2 |= (0x10 << 0);
 
-    /* ----- Interrupts enablement (CR2) -----*/
-
-    // set ITERREN (Error interrupt enable) Bit 8 to 1
-    hi2c.Instance->CR2 |= (1 << 8);
-
-    // set ITEVTEN (Event interrupt enable) Bit 9 to 1
-    hi2c.Instance->CR2 |= (1 << 9);
-
-    // set ITERREN (Buffer interrupt enable) Bit 10 to 1
-    hi2c.Instance->CR2 |= (1 << 10);
-
     /* ----- TRISE configuration ----- */
     // set the bits 5:0 to 17 = 0x11
     // 1000 ns / 62.5 + 1 = 16 + 1 = 17
@@ -64,6 +53,14 @@ void I2C_Reinit(void)
     // since this bit is set and cleared by software and cleared by hardware when PE = 0
     // it is enabled after PE became 1
     hi2c.Instance->CR1 |= (1 << 10);
+
+    /* ----- Interrupts enablement (CR2) -----*/
+
+    // set ITERREN (Error interrupt enable) Bit 8 to 1
+    hi2c.Instance->CR2 |= (1 << 8);
+
+    // set ITEVTEN (Event interrupt enable) Bit 9 to 1
+    hi2c.Instance->CR2 |= (1 << 9);
 }
 
 // Events Interrupt Handler (priority 38 - cannot be preempted by I2C1_ER)
@@ -105,9 +102,11 @@ void I2C1_ER_IRQHandler(void)
     // make snapshot of current state of SR1
     uint16_t sr1_snap = hi2c.Instance->SR1;
 
+    uint16_t sr1_errors_snap = (sr1_snap & ((uint16_t)0xF << 8));
+
     // isolate the errors bits 11:8 and assigning to the error_code
     // 0b00001111 = 2^3 + 2^2 + 2^1 + 2^0 = 8 + 4 + 2 + 1 = 15 = 0xF
-    hi2c.error_code = (sr1_snap & ((uint16_t)0xF << 8));
+    hi2c.error_code = sr1_errors_snap;
 
     // error code checking branches
     if (hi2c.error_code & I2C_ERROR_BERR)
@@ -127,38 +126,49 @@ void I2C1_ER_IRQHandler(void)
         // with NVIC the write-1-to-clear is the tool that allows to prevent race conditions if another interrupt fires mid-execution
         NVIC->ICPR[0] = (1 << 31);
     }
-    else if (hi2c.error_code & I2C_ERROR_ARLO)
+    else
     {
-        // needs to wait until the current transmission is over because the another master seized the bus
+        if (hi2c.error_code & I2C_ERROR_ARLO)
+        {
+            // needs to wait until the current transmission is over because the another master seized the bus
 
-        // clear the SR1 ARLO error flag
-        hi2c.Instance->SR1 &= ~(1 << 9);
+            // clear the SR1 ARLO error flag
+            // a single write to prevent late-incoming bits to SR1 from overwriting
+            // bits 13 and 5 are reserved bits, write 0 to them
+            hi2c.Instance->SR1 = ~((1 << 13) | (1 << 9) | (1 << 5));
 
-        // no stop issuing since the microcontroller is no longer a master
-    }
-    else if (hi2c.error_code & I2C_ERROR_AF)
-    {
-        // needs to issue STOP and then try the communication again
+            // no stop issuing since the microcontroller is no longer a master
+        }
+        if (hi2c.error_code & I2C_ERROR_AF)
+        {
+            // needs to issue STOP and then try the communication again
 
-        // make snapshot of current CR1
-        uint16_t cr1_snap = hi2c.Instance->CR1;
+            // make snapshot of current CR1
+            uint16_t cr1_snap = hi2c.Instance->CR1;
+            uint32_t cr1_modified = cr1_snap;
 
-        // clear the SR1 AF error flag
-        hi2c.Instance->SR1 &= ~(1 << 10);
+            // clear the SR1 AF error flag
+            // ~(1 << 10) = 11111011....
+            hi2c.Instance->SR1 = ~((1 << 13) | (1 << 10) | (1 << 5));
 
-        // issue STOP condition
+            // check whether there was no ARLO error
+            // if there is an ARLO error, that means that the microcontroler stopped being a master of the lines, it is now a target that just listens to the bus and waits when the controller that seized the bus concludes the communication.
+            // AF recovery sequence however issues STOP. the MCU in target mode just releases the lines letting them float as a STOP sequence. so if there are both ARLO and AF errors simultaneously, the stop issuing in the AF Recovery sequence disappears
+            if (!(sr1_errors_snap & I2C_ERROR_ARLO))
+            {
+                // issue STOP condition
+                // set the STOP bit to 1
+                cr1_modified |= (1 << 9);
+            }
 
-        uint32_t cr1_modified = cr1_snap;
+            // set the ACK bit to 1
+            cr1_modified |= (1 << 10);
+            // clear the POS bit
+            cr1_modified &= ~(1 << 11);
 
-        // set the STOP bit to 1
-        cr1_modified |= (1 << 9);
-        // set the ACK bit to 1
-        cr1_modified |= (1 << 10);
-        // clear the POS bit
-        cr1_modified &= ~(1 << 11);
-
-        // direct write of the modified CR1 to I2C->CR1
-        hi2c.Instance->CR1 = cr1_modified;
+            // direct write of the modified CR1 to I2C->CR1
+            hi2c.Instance->CR1 = cr1_modified;
+        }
     }
 
     // set the state to ERROR
@@ -375,17 +385,6 @@ void I2C_Init(I2C_HandleTypeDef *hi2c)
     // 16 MHz = 010000 = 0x10
     I2C->CR2 |= (0x10 << 0);
 
-    /* ----- Interrupts enablement (CR2) -----*/
-
-    // set ITERREN (Error interrupt enable) Bit 8 to 1
-    I2C->CR2 |= (1 << 8);
-
-    // set ITEVTEN (Event interrupt enable) Bit 9 to 1
-    I2C->CR2 |= (1 << 9);
-
-    // set ITERREN (Buffer interrupt enable) Bit 10 to 1
-    I2C->CR2 |= (1 << 10);
-
     /* ----- TRISE configuration ----- */
     // set the bits 5:0 to 17 = 0x11
     // 1000 ns / 62.5 + 1 = 16 + 1 = 17
@@ -407,6 +406,16 @@ void I2C_Init(I2C_HandleTypeDef *hi2c)
     // since this bit is set and cleared by software and cleared by hardware when PE = 0
     // it is enabled after PE became 1
     I2C->CR1 |= (1 << 10);
+
+    /* ----- Interrupts enablement (CR2) -----*/
+
+    // set ITERREN (Error interrupt enable) Bit 8 to 1
+    I2C->CR2 |= (1 << 8);
+
+    // set ITEVTEN (Event interrupt enable) Bit 9 to 1
+    I2C->CR2 |= (1 << 9);
+
+    // the ITBUFEN will be enabled dynamically when we are actively ready to transmit or receive bytes
 }
 
 static uint8_t I2C_PollHardwareFlags(I2C_RegDef_t *I2C, I2C_Bit_Masks_t bit_mask)
