@@ -72,16 +72,208 @@ void I2C1_EV_IRQHandler(void)
         return;
     }
 
-    // make snapshot of current state of SR2
+    uint16_t sr1_snapshot = hi2c.Instance->SR1;
+    uint16_t cr1_snapshot = hi2c.Instance->CR1;
+    uint16_t cr2_snapshot = hi2c.Instance->CR2;
+    uint32_t dummy = 0;
+
+    // SB bit 0 in SR1 caused interrupt
+    if (sr1_snapshot & (1 << 0))
+    {
+        // clear the SB by reading SR1 (already done by creating snapshot)
+        // following by writing the DR register with the slave's address (7 bits) + W (0)/R (1) bit
+        switch (hi2c.mode)
+        {
+        case I2C_TX:
+            // use W (0), so clear the bit 0th
+            hi2c.Instance->DR = (hi2c.slave_add << 1) & ~(0x01);
+            break;
+        case I2C_RX:
+            // use R (1), so set the bit 0th to 1
+            hi2c.Instance->DR = (hi2c.slave_add << 1) | 0x01;
+            break;
+        case I2C_TX_RX:
+            if (hi2c.phase == I2C_TX_RX_WRITE)
+            {
+                // use W (0), so clear the bit 0th
+                hi2c.Instance->DR = (hi2c.slave_add << 1) & ~(0x01);
+            }
+            else
+            {
+                // use R (1), so set the bit 0th to 1
+                hi2c.Instance->DR = (hi2c.slave_add << 1) | 0x01;
+            }
+            break;
+        }
+    }
+    // ADDR bit 1 in SR1 caused interrupt
+    else if (sr1_snapshot & (1 << 1))
+    {
+        switch (hi2c.state)
+        {
+        // transmit phase
+        case I2C_STATE_TX_ADDR:
+            // after the ADDR is set, clear it
+            // read SR2, since SR1 has already been read
+            dummy = hi2c.Instance->SR2;
+            (void)dummy;
+            break;
+
+        case I2C_STATE_RX_ADDR:
+            // N = 1 case
+            if (hi2c.RxLength == 1)
+            {
+                // need to clear the ACK before ADDR clear
+
+                // clear the ACK
+                hi2c.Instance->CR1 &= ~(1 << 10);
+
+                // clear the ADDR by reading SR2 (SR1 has already been read)
+                dummy = hi2c.Instance->SR2;
+                (void)dummy;
+            }
+            // N = 2 case
+            else if (hi2c.RxLength == 2)
+            {
+                // need to set POS = 1 and ACK = 0 before ADDR clear
+
+                // first of all, set POS (bit 11 in CR1) to 1
+                // POS = 1 - ACK bit controls the (N)ACK of the next byte with is received in the shift register
+                hi2c.Instance->CR1 |= (1 << 11);
+
+                // clear the ACK (bit 10 in CR1)
+                // to prepare the NACK pulse for the last second byte
+                hi2c.Instance->CR1 &= ~(1 << 10);
+
+                // ADDR clear
+                dummy = hi2c.Instance->SR2;
+                (void)dummy;
+            }
+            // N >= 3 case
+            else
+            {
+                // after the ADDR is set, clear it
+                // read SR2, since SR1 has already been read
+                dummy = hi2c.Instance->SR2;
+                (void)dummy;
+            }
+            break;
+        }
+    }
+    // BTF bit 2 in SR1 caused interrupt
+    // we are checking if the BTF is set AND if ITBUFEN is disabled (so it is no RxE or TxE events)
+    else if (sr1_snapshot & (1 << 2) && ((cr2_snapshot & (1 << 10)) == 0))
+    {
+        switch (hi2c.mode)
+        {
+        case I2C_TX:
+            // we have sent bytes from 0 to TxLength - 1, so TxLength bytes
+            if (hi2c.index == hi2c.TxLength)
+            {
+                // issue STOP
+                hi2c.Instance->CR1 |= (1 << 9);
+            }
+            break;
+
+        case I2C_TX_RX:
+            if (hi2c.phase == I2C_TX_RX_WRITE)
+            {
+                // repeated start
+            }
+            else if (hi2c.phase == I2C_TX_RX_READ)
+            {
+                if (hi2c.RxLength == 1)
+                {
+                }
+                // N = 2 case
+                else if (hi2c.RxLength == 2)
+                {
+                }
+                else
+                {
+                }
+            }
+            break;
+        }
+    }
+    // RxNE bit 6 in SR1 caused interrupt
+    else if (sr1_snapshot & (1 << 6))
+    {
+    }
+    // TxE bit 7 in SR1 caused interrupt
+    else if (sr1_snapshot & (1 << 7))
+    {
+    }
+
     switch (hi2c.mode)
     {
     case I2C_TX:
+        // BTF check: Byte transfer finished
+        // during BTF both BTF and TxE are set, so check BTF first
+        if (cr1_snapshot & (1 << 2))
+        {
+            // we have sent bytes from 0 to TxLength - 1, so TxLength bytes
+            if (hi2c.index == hi2c.TxLength)
+            {
+                // issue STOP
+                hi2c.Instance->CR1 |= (1 << 9);
+            }
+
+            break;
+        }
+
+        // TxE check: Data register is empty
+        // no bytes to send
+        // feed the DR a data byte
+        if (cr1_snapshot & (1 << 7))
+        {
+            hi2c.Instance->DR = hi2c.pTxBuffPtr[hi2c.index];
+            hi2c.index++;
+            break;
+        }
+
         break;
 
     case I2C_RX:
+        if (hi2c.RxLength == 0)
+            break;
+
+        // N = 1 case
+        if (hi2c.RxLength == 1)
+        {
+            if (hi2c.state == I2C_STATE_RX_ADDR)
+            {
+                // need to clear the ACK before ADDR clear
+
+                // clear the ACK
+                hi2c.Instance->CR1 &= ~(1 << 10);
+
+                // clear the ADDR
+                uint32_t dummy = hi2c.Instance->SR1;
+                dummy = hi2c.Instance->SR2;
+                (void)dummy;
+            }
+        }
+        // N = 2 case
+        else if (hi2c.RxLength == 2)
+        {
+        }
+        // N >= 3 case
+        else
+        {
+        }
         break;
 
     case I2C_TX_RX:
+        switch (hi2c.phase)
+        {
+        case I2C_TX_RX_WRITE:
+            break;
+
+        case I2C_TX_RX_READ:
+            break;
+        }
+
         break;
 
     default:
