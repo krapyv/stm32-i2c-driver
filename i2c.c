@@ -131,6 +131,9 @@ void I2C1_EV_IRQHandler(void)
                 // clear the ADDR by reading SR2 (SR1 has already been read)
                 dummy = hi2c.Instance->SR2;
                 (void)dummy;
+
+                // then set the STOP to 1, because since we have 1 byte to get, we need the STOP immediately after it
+                hi2c.Instance->CR1 |= (1 << 9);
             }
             // N = 2 case
             else if (hi2c.RxLength == 2)
@@ -175,22 +178,97 @@ void I2C1_EV_IRQHandler(void)
             }
             break;
 
+        case I2C_RX:
+            // no BTF is possible (shift register never fills with nothing behind it)
+            // N = 2 case
+            if (hi2c.RxLength == 2)
+            {
+                // after BTF is read, we have the byte 1 in the DR, the byte 2 in the shift register
+
+                // issue STOP
+                hi2c.Instance->CR1 |= (1 << 9);
+
+                // read both bytes (after the byte 1 is read, the byte 2 immediately drops from shift register to the DR)
+                hi2c.pRxBuffPtr[0] = hi2c.Instance->DR; // byte 1
+                hi2c.pRxBuffPtr[1] = hi2c.Instance->DR; // byte 2
+            }
+            else if (hi2c.RxLength >= 3)
+            {
+                if (hi2c.index == hi2c.RxLength - 3)
+                {
+                    // if BTF is fired, byte N - 2 in DR, byte N - 1 in shift register
+
+                    // clear ACK bit 10 in CR1
+                    hi2c.Instance->CR1 &= ~(1 << 10);
+
+                    // read data N-2
+                    hi2c.pRxBuffPtr[hi2c.index] = hi2c.Instance->DR;
+                    hi2c.index++;
+
+                    break;
+                }
+
+                else if (hi2c.index == hi2c.RxLength - 2)
+                {
+                    // if BTF is fired, byte N - 1 in DR, byte N in shift register
+
+                    // set STOP high (we have all the bytes we need)
+                    hi2c.Instance->CR1 |= (1 << 9);
+
+                    // read bytes N - 1 and N
+                    hi2c.pRxBuffPtr[hi2c.index++] = hi2c.Instance->DR; // N - 1
+
+                    hi2c.pRxBuffPtr[hi2c.index] = hi2c.Instance->DR; // N
+                }
+            }
+            break;
+
         case I2C_TX_RX:
             if (hi2c.phase == I2C_TX_RX_WRITE)
             {
                 // repeated start
+                hi2c.Instance->CR1 |= (1 << 8);
             }
-            else if (hi2c.phase == I2C_TX_RX_READ)
+            // no BTF is possible (shift register never fills with nothing behind it)
+            // N = 2 case
+            if (hi2c.RxLength == 2)
             {
-                if (hi2c.RxLength == 1)
+                // after BTF is read, we have the byte 1 in the DR, the byte 2 in the shift register
+
+                // issue STOP
+                hi2c.Instance->CR1 |= (1 << 9);
+
+                // read both bytes (after the byte 1 is read, the byte 2 immediately drops from shift register to the DR)
+                hi2c.pRxBuffPtr[0] = hi2c.Instance->DR; // byte 1
+                hi2c.pRxBuffPtr[1] = hi2c.Instance->DR; // byte 2
+            }
+            else if (hi2c.RxLength >= 3)
+            {
+                if (hi2c.index == hi2c.RxLength - 3)
                 {
+                    // if BTF is fired, byte N - 2 in DR, byte N - 1 in shift register
+
+                    // clear ACK bit 10 in CR1
+                    hi2c.Instance->CR1 &= ~(1 << 10);
+
+                    // read data N-2
+                    hi2c.pRxBuffPtr[hi2c.index] = hi2c.Instance->DR;
+                    hi2c.index++;
+
+                    break;
                 }
-                // N = 2 case
-                else if (hi2c.RxLength == 2)
+
+                else if (hi2c.index == hi2c.RxLength - 2)
                 {
-                }
-                else
-                {
+                    // if BTF is fired, byte N - 1 in DR, byte N in shift register
+
+                    // set STOP high (we have all the bytes we need)
+                    hi2c.Instance->CR1 |= (1 << 9);
+
+                    // read bytes N - 1 and N
+                    hi2c.pRxBuffPtr[hi2c.index++] = hi2c.Instance->DR; // N - 1
+
+                    hi2c.pRxBuffPtr[hi2c.index] = hi2c.Instance->DR; // N
                 }
             }
             break;
@@ -199,6 +277,29 @@ void I2C1_EV_IRQHandler(void)
     // RxNE bit 6 in SR1 caused interrupt
     else if (sr1_snapshot & (1 << 6))
     {
+        switch (hi2c.state)
+        {
+        case I2C_STATE_RX_BUSY:
+            if (hi2c.RxLength == 1)
+            {
+                // stop is already set after the clearing of the ADDR
+
+                // read the byte
+                hi2c.pRxBuffPtr[0] = hi2c.Instance->DR;
+
+                // enabled ACK
+                hi2c.Instance->CR1 |= (1 << 10);
+                break;
+            }
+
+            else if (hi2c.RxLength == 2)
+            {
+            }
+            // RxLength >= 3
+            else
+            {
+            }
+        }
     }
     // TxE bit 7 in SR1 caused interrupt
     else if (sr1_snapshot & (1 << 7))
