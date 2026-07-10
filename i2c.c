@@ -87,21 +87,25 @@ void I2C1_EV_IRQHandler(void)
         case I2C_TX:
             // use W (0), so clear the bit 0th
             hi2c.Instance->DR = (hi2c.slave_add << 1) & ~(0x01);
+            hi2c.state = I2C_STATE_TX_ADDR;
             break;
         case I2C_RX:
             // use R (1), so set the bit 0th to 1
             hi2c.Instance->DR = (hi2c.slave_add << 1) | 0x01;
+            hi2c.state = I2C_STATE_RX_ADDR;
             break;
         case I2C_TX_RX:
             if (hi2c.phase == I2C_TX_RX_WRITE)
             {
                 // use W (0), so clear the bit 0th
                 hi2c.Instance->DR = (hi2c.slave_add << 1) & ~(0x01);
+                hi2c.state = I2C_STATE_TX_ADDR;
             }
             else
             {
                 // use R (1), so set the bit 0th to 1
                 hi2c.Instance->DR = (hi2c.slave_add << 1) | 0x01;
+                hi2c.state = I2C_STATE_RX_ADDR;
             }
             break;
         }
@@ -164,8 +168,8 @@ void I2C1_EV_IRQHandler(void)
         }
     }
     // BTF bit 2 in SR1 caused interrupt
-    // we are checking if the BTF is set AND if ITBUFEN is disabled (so it is no RxE or TxE events)
-    else if (sr1_snapshot & (1 << 2) && ((cr2_snapshot & (1 << 10)) == 0))
+    // we are checking if the BTF is set
+    else if (sr1_snapshot & (1 << 2))
     {
         switch (hi2c.mode)
         {
@@ -228,157 +232,94 @@ void I2C1_EV_IRQHandler(void)
             {
                 // repeated start
                 hi2c.Instance->CR1 |= (1 << 8);
+                // reset index
+                hi2c.index = 0;
+
+                // flip the phase value
+                hi2c.phase = I2C_TX_RX_READ;
             }
-            // no BTF is possible (shift register never fills with nothing behind it)
-            // N = 2 case
-            if (hi2c.RxLength == 2)
+            else if (hi2c.phase == I2C_TX_RX_READ)
             {
-                // after BTF is read, we have the byte 1 in the DR, the byte 2 in the shift register
-
-                // issue STOP
-                hi2c.Instance->CR1 |= (1 << 9);
-
-                // read both bytes (after the byte 1 is read, the byte 2 immediately drops from shift register to the DR)
-                hi2c.pRxBuffPtr[0] = hi2c.Instance->DR; // byte 1
-                hi2c.pRxBuffPtr[1] = hi2c.Instance->DR; // byte 2
-            }
-            else if (hi2c.RxLength >= 3)
-            {
-                if (hi2c.index == hi2c.RxLength - 3)
+                // no BTF is possible (shift register never fills with nothing behind it)
+                // N = 2 case
+                if (hi2c.RxLength == 2)
                 {
-                    // if BTF is fired, byte N - 2 in DR, byte N - 1 in shift register
+                    // after BTF is read, we have the byte 1 in the DR, the byte 2 in the shift register
 
-                    // clear ACK bit 10 in CR1
-                    hi2c.Instance->CR1 &= ~(1 << 10);
-
-                    // read data N-2
-                    hi2c.pRxBuffPtr[hi2c.index] = hi2c.Instance->DR;
-                    hi2c.index++;
-
-                    break;
-                }
-
-                else if (hi2c.index == hi2c.RxLength - 2)
-                {
-                    // if BTF is fired, byte N - 1 in DR, byte N in shift register
-
-                    // set STOP high (we have all the bytes we need)
+                    // issue STOP
                     hi2c.Instance->CR1 |= (1 << 9);
 
-                    // read bytes N - 1 and N
-                    hi2c.pRxBuffPtr[hi2c.index++] = hi2c.Instance->DR; // N - 1
+                    // read both bytes (after the byte 1 is read, the byte 2 immediately drops from shift register to the DR)
+                    hi2c.pRxBuffPtr[0] = hi2c.Instance->DR; // byte 1
+                    hi2c.pRxBuffPtr[1] = hi2c.Instance->DR; // byte 2
+                }
+                else if (hi2c.RxLength >= 3)
+                {
+                    if (hi2c.index == hi2c.RxLength - 3)
+                    {
+                        // if BTF is fired, byte N - 2 in DR, byte N - 1 in shift register
 
-                    hi2c.pRxBuffPtr[hi2c.index] = hi2c.Instance->DR; // N
+                        // clear ACK bit 10 in CR1
+                        hi2c.Instance->CR1 &= ~(1 << 10);
+
+                        // read data N-2
+                        hi2c.pRxBuffPtr[hi2c.index] = hi2c.Instance->DR;
+                        hi2c.index++;
+
+                        break;
+                    }
+
+                    else if (hi2c.index == hi2c.RxLength - 2)
+                    {
+                        // if BTF is fired, byte N - 1 in DR, byte N in shift register
+
+                        // set STOP high (we have all the bytes we need)
+                        hi2c.Instance->CR1 |= (1 << 9);
+
+                        // read bytes N - 1 and N
+                        hi2c.pRxBuffPtr[hi2c.index++] = hi2c.Instance->DR; // N - 1
+
+                        hi2c.pRxBuffPtr[hi2c.index] = hi2c.Instance->DR; // N
+                    }
                 }
             }
+
             break;
         }
     }
     // RxNE bit 6 in SR1 caused interrupt
     else if (sr1_snapshot & (1 << 6))
     {
-        switch (hi2c.state)
+
+        if (hi2c.RxLength == 1)
         {
-        case I2C_STATE_RX_BUSY:
-            if (hi2c.RxLength == 1)
-            {
-                // stop is already set after the clearing of the ADDR
+            // stop is already set after the clearing of the ADDR
 
-                // read the byte
-                hi2c.pRxBuffPtr[0] = hi2c.Instance->DR;
+            // read the byte
+            hi2c.pRxBuffPtr[0] = hi2c.Instance->DR;
 
-                // enabled ACK
-                hi2c.Instance->CR1 |= (1 << 10);
-                break;
-            }
+            // enabled ACK
+            hi2c.Instance->CR1 |= (1 << 10);
+        }
 
-            else if (hi2c.RxLength == 2)
+        // RxLength == 2 does not use RxE
+
+        // RxLength >= 3
+        else if (hi2c.RxLength >= 3)
+        {
+            if (hi2c.index < hi2c.RxLength - 2)
             {
-            }
-            // RxLength >= 3
-            else
-            {
+                hi2c.pRxBuffPtr[hi2c.index++] = hi2c.Instance->DR;
             }
         }
     }
     // TxE bit 7 in SR1 caused interrupt
     else if (sr1_snapshot & (1 << 7))
     {
-    }
-
-    switch (hi2c.mode)
-    {
-    case I2C_TX:
-        // BTF check: Byte transfer finished
-        // during BTF both BTF and TxE are set, so check BTF first
-        if (cr1_snapshot & (1 << 2))
+        if (hi2c.index < hi2c.TxLength)
         {
-            // we have sent bytes from 0 to TxLength - 1, so TxLength bytes
-            if (hi2c.index == hi2c.TxLength)
-            {
-                // issue STOP
-                hi2c.Instance->CR1 |= (1 << 9);
-            }
-
-            break;
+            hi2c.Instance->DR = hi2c.pTxBuffPtr[hi2c.index++];
         }
-
-        // TxE check: Data register is empty
-        // no bytes to send
-        // feed the DR a data byte
-        if (cr1_snapshot & (1 << 7))
-        {
-            hi2c.Instance->DR = hi2c.pTxBuffPtr[hi2c.index];
-            hi2c.index++;
-            break;
-        }
-
-        break;
-
-    case I2C_RX:
-        if (hi2c.RxLength == 0)
-            break;
-
-        // N = 1 case
-        if (hi2c.RxLength == 1)
-        {
-            if (hi2c.state == I2C_STATE_RX_ADDR)
-            {
-                // need to clear the ACK before ADDR clear
-
-                // clear the ACK
-                hi2c.Instance->CR1 &= ~(1 << 10);
-
-                // clear the ADDR
-                uint32_t dummy = hi2c.Instance->SR1;
-                dummy = hi2c.Instance->SR2;
-                (void)dummy;
-            }
-        }
-        // N = 2 case
-        else if (hi2c.RxLength == 2)
-        {
-        }
-        // N >= 3 case
-        else
-        {
-        }
-        break;
-
-    case I2C_TX_RX:
-        switch (hi2c.phase)
-        {
-        case I2C_TX_RX_WRITE:
-            break;
-
-        case I2C_TX_RX_READ:
-            break;
-        }
-
-        break;
-
-    default:
-        break;
     }
 
     return;
