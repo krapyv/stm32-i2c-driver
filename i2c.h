@@ -35,11 +35,8 @@ typedef enum
 {
     I2C_STATE_IDLE = 0,
     I2C_STATE_ERROR,
-    I2C_STATE_BUS_BUSY,
     I2C_STATE_TX_ADDR,
-    I2C_STATE_TX_BUSY,
     I2C_STATE_RX_ADDR,
-    I2C_STATE_RX_BUSY,
     I2C_STATE_FINISHING,
     I2C_STATE_DONE
 } I2C_State_t;
@@ -63,7 +60,6 @@ typedef enum
     I2C_ERROR_BERR = (1 << 8),
     I2C_ERROR_ARLO = (1 << 9),
     I2C_ERROR_AF = (1 << 10),
-    // I2C_ERROR_OVR = (1 << 11)
 } I2C_Error_Code_t;
 
 typedef struct
@@ -92,8 +88,8 @@ typedef struct
 
 void I2C_Reinit(void);
 void I2C_Init();
-I2C_Status_t I2C_Master_Transmit(I2C_HandleTypeDef *hi2c);
-I2C_Status_t I2C_Master_Receive(I2C_HandleTypeDef *hi2c, uint8_t slave_addr, uint8_t *data, uint8_t length);
-I2C_Status_t I2C_Master_Transmit_Receive(I2C_HandleTypeDef *hi2c, uint8_t slave_addr, uint8_t *pSend, uint8_t *pReceive, uint8_t send_length, uint8_t receive_length);
+I2C_Status_t I2C_Master_Transmit(uint8_t slave_addr, uint8_t *data, uint8_t length);
+I2C_Status_t I2C_Master_Receive(uint8_t slave_addr, uint8_t *data, uint8_t length);
+I2C_Status_t I2C_Master_Transmit_Receive(uint8_t slave_addr, uint8_t *pSend, uint8_t *pReceive, uint8_t send_length, uint8_t receive_length);
 
 #endif

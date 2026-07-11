@@ -184,11 +184,13 @@ void I2C1_EV_IRQHandler(void)
             {
                 // issue STOP
                 hi2c.Instance->CR1 |= (1 << 9);
+
+                hi2c.state = I2C_STATE_FINISHING;
             }
             break;
 
         case I2C_RX:
-            // no BTF is possible (shift register never fills with nothing behind it)
+            // N = 1: no BTF is possible (shift register never fills with nothing behind it)
             // N = 2 case
             if (hi2c.RxLength == 2)
             {
@@ -200,6 +202,14 @@ void I2C1_EV_IRQHandler(void)
                 // read both bytes (after the byte 1 is read, the byte 2 immediately drops from shift register to the DR)
                 hi2c.pRxBuffPtr[0] = hi2c.Instance->DR; // byte 1
                 hi2c.pRxBuffPtr[1] = hi2c.Instance->DR; // byte 2
+
+                // after both bytes have been read, clear POS
+                hi2c.Instance->CR1 &= ~(1 << 11);
+
+                // after all bytes have been read, re-enable the ACK bit in CR1
+                hi2c.Instance->CR1 |= (1 << 10);
+
+                hi2c.state = I2C_STATE_FINISHING;
             }
             else if (hi2c.RxLength >= 3)
             {
@@ -228,6 +238,11 @@ void I2C1_EV_IRQHandler(void)
                     hi2c.pRxBuffPtr[hi2c.index++] = hi2c.Instance->DR; // N - 1
 
                     hi2c.pRxBuffPtr[hi2c.index] = hi2c.Instance->DR; // N
+
+                    // after all bytes have been read, re-enable the ACK bit in CR1
+                    hi2c.Instance->CR1 |= (1 << 10);
+
+                    hi2c.state = I2C_STATE_FINISHING;
                 }
             }
             break;
@@ -257,6 +272,14 @@ void I2C1_EV_IRQHandler(void)
                     // read both bytes (after the byte 1 is read, the byte 2 immediately drops from shift register to the DR)
                     hi2c.pRxBuffPtr[0] = hi2c.Instance->DR; // byte 1
                     hi2c.pRxBuffPtr[1] = hi2c.Instance->DR; // byte 2
+
+                    // after both bytes have been read, clear POS
+                    hi2c.Instance->CR1 &= ~(1 << 11);
+
+                    // after all bytes have been read, re-enable the ACK bit in CR1
+                    hi2c.Instance->CR1 |= (1 << 10);
+
+                    hi2c.state = I2C_STATE_FINISHING;
                 }
                 else if (hi2c.RxLength >= 3)
                 {
@@ -285,6 +308,11 @@ void I2C1_EV_IRQHandler(void)
                         hi2c.pRxBuffPtr[hi2c.index++] = hi2c.Instance->DR; // N - 1
 
                         hi2c.pRxBuffPtr[hi2c.index] = hi2c.Instance->DR; // N
+
+                        // after all bytes have been read, re-enable the ACK bit in CR1
+                        hi2c.Instance->CR1 |= (1 << 10);
+
+                        hi2c.state = I2C_STATE_FINISHING;
                     }
                 }
             }
@@ -307,6 +335,8 @@ void I2C1_EV_IRQHandler(void)
             hi2c.Instance->CR1 |= (1 << 10);
 
             // ITBUFEN is not disabled
+
+            hi2c.state = I2C_STATE_FINISHING;
         }
 
         // RxLength == 2 does not use RxE
@@ -775,449 +805,61 @@ I2C_Status_t I2C_Master_Transmit(uint8_t slave_addr, uint8_t *data, uint8_t leng
     return I2C_OK;
 }
 
-// I2C_Status_t I2C_Master_Transmit(I2C_HandleTypeDef *hi2c, uint8_t slave_addr, uint8_t *data, uint8_t length)
-// {
-//     if (hi2c == NULL || hi2c->Instance == NULL || data == NULL || length == 0)
-//     {
-//         return I2C_ERROR;
-//     }
-
-//     // declare a local I2C var to simplify the naming
-//     I2C_RegDef_t *I2C = hi2c->Instance;
-
-//     // wait until the bus is completely idle (BUSY = 0)
-//     if (I2C_PollHardwareBusy(I2C))
-//     {
-//         return I2C_ERROR;
-//     }
-
-//     // start the transaction by issuing START (set to 1)
-//     I2C->CR1 |= (1 << 8);
-//     // START is cleared by hardware when start is sent
-
-//     // polling the SB (Start bit)
-//     // when exit, the bit is set, start condition generated
-//     if (I2C_PollHardwareFlags(I2C, I2C_SB_MASK))
-//     {
-//         return I2C_ERROR;
-//     }
-
-//     // SB is cleared by reading SR1 (done in the poll above) + writing DR
-//     // SR1 read is already consumed by the polling loop - writing DR now completes the clear
-
-//     // write the slave address to the DR register (it will start sending the bits to the slave and clear the SB bit)
-//     // 7 bit slave address + W (Write) bit 0
-//     I2C->DR = (slave_addr << 1) & ~0x01; // 0x01 = 2^0 = 1 = (1 << 0)
-
-//     // polling the ADDR (Address sent) bit
-//     // the bit is set after the ACK of the byte
-//     if (I2C_PollHardwareFlags(I2C, I2C_ADDR_MASK))
-//     {
-//         return I2C_ERROR;
-//     }
-
-//     // read the SR1 and SR2 to clear the ADDR bit in the SR1
-//     // SR1 read is already consumed by the polling loop above - reading SR2 now completes the clear
-//     uint32_t dummy = I2C->SR2;
-//     (void)dummy; // preventing the compiler warnings of an unused variable
-
-//     // ensure we are the Master (MSL, bit 0 = 1) and Transmitter (TRA, bit 2 = 1)
-//     // 0b0101 = 2^2 + 2^0 = 4 + 1 = 5 = 0x05
-//     if ((dummy & ((1 << 2) | (1 << 0))) != 0x05)
-//     {
-//         // if we enter this if body, the hardware is desynchronized
-//         // force STOP
-//         I2C->CR1 |= (1 << 9);
-//         return I2C_ERROR;
-//     }
-
-//     for (uint8_t i = 0; i < length; i++)
-//     {
-//         // polling the TxE Transmitters Data register empty
-//         // goes high after every byte leaves the DR
-//         if (I2C_PollHardwareFlags(I2C, I2C_TXE_MASK))
-//         {
-//             return I2C_ERROR;
-//         }
-
-//         I2C->DR = data[i];
-//     }
-
-//     // before sending the STOP condition
-//     // we need to make sure the byte has left the shift register, so we are not going to corrupt the last byte mid-sending
-//     // polling the Byte transfer finished
-//     if (I2C_PollHardwareFlags(I2C, I2C_BTF_MASK))
-//     {
-//         return I2C_ERROR;
-//     }
-
-//     // issuing the Stop generation
-//     I2C->CR1 |= (1 << 9);
-
-//     return I2C_OK;
-// }
-
-I2C_Status_t I2C_Master_Receive(I2C_HandleTypeDef *hi2c, uint8_t slave_addr, uint8_t *data, uint8_t length)
+I2C_Status_t I2C_Master_Receive(uint8_t slave_addr, uint8_t *data, uint8_t length)
 {
-    if (hi2c == NULL || data == NULL || length == 0)
+    if (hi2c.Instance == NULL || data == NULL || length == 0)
     {
         return I2C_ERROR;
     }
 
-    // declare a local I2C var to simplify the naming
-    I2C_RegDef_t *I2C = hi2c->Instance;
+    hi2c.slave_add = slave_addr;
+    hi2c.pRxBuffPtr = data;
+    hi2c.RxLength = length;
+    hi2c.mode = I2C_RX;
+    hi2c.index = 0;
+    hi2c.error_code = 0;
+    hi2c.state = I2C_STATE_RX_ADDR;
 
     // wait until the bus is completely idle (BUSY = 0)
-    if (I2C_PollHardwareBusy(I2C))
+    if (I2C_PollHardwareBusy(hi2c.Instance))
     {
         return I2C_ERROR;
     }
 
     // Master issues the Start
-    I2C->CR1 |= (1 << 8);
+    hi2c.Instance->CR1 |= (1 << 8);
     // hardware clears it after the start is sent
-
-    // poll the SB bit 0 in SR1
-    if (I2C_PollHardwareFlags(I2C, I2C_SB_MASK))
-    {
-        return I2C_ERROR;
-    }
-
-    // clear the SB bit 0 in SR1 by readimg the SR1 and then writing the DR with the slave's address
-    // SR1 read is consumed in the loop above, so the DR write completes a clear
-
-    // write a peripheral address to the DR
-    // since we want to read data bytes from the peripheral, we are setting the bit 0 (R) as 0x01 = 1
-    I2C->DR = (slave_addr << 1) | (0x01 << 0);
-
-    // poll the ADDR
-    // hardware sets it to 1 after the ACK of the byte, so after the peripheral has acknowledged its address
-    if (I2C_PollHardwareFlags(I2C, I2C_ADDR_MASK))
-    {
-        return I2C_ERROR;
-    }
-
-    /* ----- ONE-BYTE SCENARIO ----- */
-    if (length == 1)
-    {
-        // we have already polled ADDR
-
-        // clear the ACK (Bit 10 CR1)
-        I2C->CR1 &= ~(1 << 10);
-    }
-    /* ----- ONE-BYTE SCENARIO ----- */
-
-    // read the SR1 and SR2 to clear the ADDR bit in the SR1
-    // SR1 read is consumed in the ADDR polling loop, so SR2 read completes a clear
-    uint32_t dummy = I2C->SR2;
-    (void)dummy; // preventing the compiler warnings of an unused variable
-
-    // ensure we are the Master (MSL, bit 0 = 1) and Receiver (TRA, bit 2 = 0)
-    // 0b0001 = 2^0 = 1 = 0x01
-    if ((I2C->SR2 & ((1 << 2) | (1 << 0))) != 0x01)
-    {
-        // if we enter this if body, the hardware is desynchronized
-        // force STOP
-        I2C->CR1 |= (1 << 9);
-        return I2C_ERROR;
-    }
-
-    /* ----- ONE-BYTE SCENARIO ----- */
-    if (length == 1)
-    {
-        // set STOP condition
-        I2C->CR1 |= (1 << 9);
-
-        // wait for a byte from the peripheral (poll RxNE Bit 6)
-        if (I2C_PollHardwareFlags(I2C, I2C_RXNE_MASK))
-        {
-            return I2C_ERROR;
-        }
-
-        *data = I2C->DR;
-
-        // enable ACK
-        I2C->CR1 |= (1 << 10);
-
-        // the first and simultaneously the last byte of data has been received, so exit the function
-        return I2C_OK;
-    }
-    /* ----- ONE-BYTE SCENARIO ----- */
-
-    for (uint8_t i = 0; i < length; i++)
-    {
-        // check if we are about to handle the second-to-last byte
-        if (i == length - 2)
-        {
-            // if so, we need to clear ACK bit in CR1 to prevent the peripheral to send us unwanted bytes
-            I2C->CR1 &= ~(1 << 10);
-        }
-
-        // wait for a byte from the peripheral (poll RxNE Bit 6)
-        if (I2C_PollHardwareFlags(I2C, I2C_RXNE_MASK))
-        {
-            return I2C_ERROR;
-        }
-
-        data[i] = I2C->DR;
-
-        // check if we have handled the second-to-last byte
-        if (i == length - 2)
-        {
-            // if so, the last byte is already clocking in, so we need to issue the STOP condition
-            I2C->CR1 |= (1 << 9);
-        }
-    }
-
-    // after the data was received and the STOP issue was issued, re-enble the ACK
-    I2C->CR1 |= (1 << 10);
 
     return I2C_OK;
 }
 
-I2C_Status_t I2C_Master_Transmit_Receive(I2C_HandleTypeDef *hi2c, uint8_t slave_addr, uint8_t *pSend, uint8_t *pReceive, uint8_t send_length, uint8_t receive_length)
+I2C_Status_t I2C_Master_Transmit_Receive(uint8_t slave_addr, uint8_t *pSend, uint8_t *pReceive, uint8_t send_length, uint8_t receive_length)
 {
-    if (hi2c == NULL || pSend == NULL || pReceive == NULL || send_length == 0 || receive_length == 0)
+    if (hi2c.Instance == NULL || pSend == NULL || pReceive == NULL || send_length == 0 || receive_length == 0)
     {
         return I2C_ERROR;
     }
 
-    // declare a local I2C var to simplify the naming
-    I2C_RegDef_t *I2C = hi2c->Instance;
+    hi2c.slave_add = slave_addr;
+    hi2c.pTxBuffPtr = pSend;
+    hi2c.TxLength = send_length;
+    hi2c.pRxBuffPtr = pReceive;
+    hi2c.RxLength = receive_length;
+    hi2c.mode = I2C_TX_RX;
+    hi2c.phase = I2C_TX_RX_WRITE;
+    hi2c.index = 0;
+    hi2c.error_code = 0;
+    hi2c.state = I2C_STATE_TX_ADDR;
 
     // wait until the bus is completely idle (BUSY == 0)
-    if (I2C_PollHardwareBusy(I2C))
+    if (I2C_PollHardwareBusy(hi2c.Instance))
     {
         return I2C_ERROR;
     }
 
     // Master issues the Start condition
-    I2C->CR1 |= (1 << 8);
+    hi2c.Instance->CR1 |= (1 << 8);
     // the hardware clears this bit when the start is sent
-
-    if (I2C_PollHardwareFlags(I2C, I2C_SB_MASK))
-    {
-        return I2C_ERROR;
-    }
-
-    // clear the SB bit by reading the SR1 and writing the DR register
-    // SR1 read was done in a polling loop above, so the next DR writing completes the clear
-
-    /* ----- WRITE PART ----- */
-
-    // write the slave's address (7 bits) + the bit 0 of 0 (Writing) (the Master sending bytes over line to the slave)
-    I2C->DR = (slave_addr << 1) & ~(0x01 << 0);
-
-    // poll the ADDR bit 1 in SR1
-    // it is set by hardware when the peripheral acknowledges its address
-
-    // to eliminate cases when there is firstly an error, and then the ADDR bit hits, so the polling loop exits without handling the error
-    // check the error flags first and handle them, then check for the ADDR bit
-
-    if (I2C_PollHardwareFlags(I2C, I2C_ADDR_MASK))
-    {
-        return I2C_ERROR;
-    }
-
-    // clear the ADDR bit
-    // SR1 read was done in the poll loop above, so only SR2 read remained to complete the clear
-    uint32_t dummy = I2C->SR2;
-    (void)dummy;
-
-    // ensure we are the Master (MSL, bit 0 = 1) and Transmitter (TRA, bit 2 = 1)
-    // 0b0101 = 2^2 + 2^0 = 4 + 1 = 5 = 0x05
-    if ((dummy & ((1 << 2) | (1 << 0))) != 0x05)
-    {
-        // if we enter this if body, the hardware is desynchronized
-        // force STOP
-        I2C->CR1 |= (1 << 9);
-        return I2C_ERROR;
-    }
-
-    // send the data
-    for (uint8_t i = 0; i < send_length; i++)
-    {
-        // poll the TxE Data register empty (transmitters)
-        if (I2C_PollHardwareFlags(I2C, I2C_TXE_MASK))
-        {
-            return I2C_ERROR;
-        }
-
-        I2C->DR = pSend[i];
-    }
-
-    // poll the BTF bit 2 in SR1
-    // to prevent corrupting the byte that could be still in the shift registers
-    if (I2C_PollHardwareFlags(I2C, I2C_BTF_MASK))
-    {
-        return I2C_ERROR;
-    }
-
-    /* ----- WRITE PART ----- */
-
-    /* ----- READ PART ----- */
-    // generate the Repeated start
-    // by setting the START bit 8 in CR1 to 1
-    I2C->CR1 |= (1 << 8);
-
-    // poll the SB bit 0
-    if (I2C_PollHardwareFlags(I2C, I2C_SB_MASK))
-    {
-        return I2C_ERROR;
-    }
-
-    // clear the SB bit 0 by reading the SR1 and writing to the DR
-    // SR1 read is consumed in the loop above, so the DR writing completes a clear
-
-    // write to the DR a slave's address (7 bits) + last bit 0 as 1 (R) becasue the Master wants to read the data from the slave
-    I2C->DR = (slave_addr << 1) | (0x01 << 0);
-
-    // poll the ADDR
-    if (I2C_PollHardwareFlags(I2C, I2C_ADDR_MASK))
-    {
-        return I2C_ERROR;
-    }
-
-    /* ---------- ONE-BYTE SCENARIO ---------- */
-    if (receive_length == 1)
-    {
-        // immediately after the ADDR bit hits, clear the ACK bit in the CR1 to prevent the peripheral from eventual sending of unwanted bytes
-        I2C->CR1 &= ~(1 << 10);
-    }
-    /* ---------- ONE-BYTE SCENARIO ---------- */
-
-    /* ---------- TWO-BYTES SCENARIO ---------- */
-    if (receive_length == 2)
-    {
-        // first of all, set POS (bit 11 in CR1) to 1
-        // POS = 1 - ACK bit controls the (N)ACK of the next byte with is received in the shift register
-        I2C->CR1 |= (1 << 11);
-
-        // clear the ACK (bit 10 in CR1)
-        // to prepare the NACK pulse for the last second byte
-        I2C->CR1 &= ~(1 << 10);
-    }
-    /* ---------- TWO-BYTES SCENARIO ---------- */
-
-    /* ---------- SHARED ADDR CLEARING ---------- */
-    // clear the ADDR bit 1 in SR1
-    dummy = I2C->SR1;
-    dummy = I2C->SR2;
-
-    // ensure we are the Master (MSL, bit 0 = 1) and Receiver (TRA, bit 2 = 0)
-    // 0b0001 = 2^0 = 1 = 0x01
-    if ((dummy & ((1 << 2) | (1 << 0))) != 0x01)
-    {
-        uint32_t cr1_snap = I2C->CR1;
-
-        cr1_snap |= (1 << 9);
-        cr1_snap |= (1 << 10);
-        cr1_snap &= ~(1 << 11);
-        // if we enter this if body, the hardware is desynchronized
-        // force STOP
-        I2C->CR1 = cr1_snap;
-
-        return I2C_ERROR;
-    }
-
-    /* ---------- SHARED ADDR CLEARING ---------- */
-
-    /* ---------- ONE-BYTE SCENARIO ---------- */
-    if (receive_length == 1)
-    {
-        // generate the STOP condition to prevent the peripheral from sending unwanted bytes after the one we are asking for
-        I2C->CR1 |= (1 << 9);
-
-        // poll the RxNE
-        // exits when the byte arrives
-        if (I2C_PollHardwareFlags(I2C, I2C_RXNE_MASK))
-        {
-            return I2C_ERROR;
-        }
-
-        // once the byte arrives, read it to our variable
-        *pReceive = I2C->DR;
-    }
-
-    /* ---------- TWO-BYTES SCENARIO ---------- */
-    else if (receive_length == 2)
-    {
-        // poll BTF - we need to make sure that both bytes arrived: the first one is in the DR, the second is in the shift register
-        if (I2C_PollHardwareFlags(I2C, I2C_BTF_MASK))
-        {
-            return I2C_ERROR;
-        }
-
-        // after the BTF is set, issue the STOP condition to prevent fetching of the third byte
-        I2C->CR1 |= (1 << 9);
-
-        // read the data
-        for (uint8_t i = 0; i < receive_length; i++)
-        {
-            // poll RxNE
-            if (I2C_PollHardwareFlags(I2C, I2C_RXNE_MASK))
-            {
-                return I2C_ERROR;
-            }
-            pReceive[i] = I2C->DR;
-        }
-    }
-    /* ---------- TWO-BYTES SCENARIO ---------- */
-
-    /* ---------- MULTI-BYTE SCENARIO ----------*/
-    else if (receive_length >= 3)
-    {
-
-        // read the data
-        for (uint8_t i = 0; i < receive_length - 2; i++)
-        {
-            // poll the RxNE
-            // exits when the byte arrives
-            if (I2C_PollHardwareFlags(I2C, I2C_RXNE_MASK))
-            {
-                return I2C_ERROR;
-            }
-
-            // once the byte arrived, read it to the array
-            pReceive[i] = I2C->DR;
-        }
-
-        // poll the RxNE
-        // exits when the byte arrives
-        if (I2C_PollHardwareFlags(I2C, I2C_BTF_MASK))
-        {
-            return I2C_ERROR;
-        }
-
-        // the current byte is the second-to-last
-        // to clear the ACK bit in CR1
-
-        // since the bytes are ACKed/NACKed only during the transition from the shift register to the DR
-        // after the byte N-2 is the DR and the byte N-1 is in the shift register, the N-1 byte receives ACK/NACK after the DR is free
-        // so we can clear the ACK bit there
-        I2C->CR1 &= ~(1 << 10);
-
-        // once the byte arrived, read it to the array
-        pReceive[receive_length - 2] = I2C->DR;
-
-        // generate the STOP condition in CR1 after the last byte
-        I2C->CR1 |= (1 << 9);
-
-        pReceive[receive_length - 1] = I2C->DR;
-
-        // wait until the STOP condition is detected by hardware
-        while (I2C->CR1 & (1 << 9))
-            ;
-    }
-    /* ---------- MULTI-BYTE SCENARIO ----------*/
-
-    // after both bytes have been read, clear POS
-    I2C->CR1 &= ~(1 << 11);
-
-    // after all bytes have been read, re-enable the ACK bit in CR1
-    I2C->CR1 |= (1 << 10);
-
-    /* ----- READ PART ----- */
 
     return I2C_OK;
 }
