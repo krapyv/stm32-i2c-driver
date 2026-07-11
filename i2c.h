@@ -87,9 +87,10 @@ typedef struct
 } I2C_HandleTypeDef;
 
 void I2C_Reinit(void);
-void I2C_Init();
+void I2C_Init(void);
 I2C_Status_t I2C_Master_Transmit(uint8_t slave_addr, uint8_t *data, uint8_t length);
 I2C_Status_t I2C_Master_Receive(uint8_t slave_addr, uint8_t *data, uint8_t length);
 I2C_Status_t I2C_Master_Transmit_Receive(uint8_t slave_addr, uint8_t *pSend, uint8_t *pReceive, uint8_t send_length, uint8_t receive_length);
 
+void I2C_Process(void);
 #endif
