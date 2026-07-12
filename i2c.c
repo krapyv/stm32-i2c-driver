@@ -894,7 +894,7 @@ void I2C_PollStopConfirmation()
     return;
 }
 
-void I2c_Process(void)
+void I2C_Process(void)
 {
     // Firstly read index, then state
     uint8_t current_index = hi2c.index;
@@ -904,10 +904,6 @@ void I2c_Process(void)
     if (current_state == I2C_STATE_FINISHING)
     {
         I2C_PollStopConfirmation();
-    }
-
-    else if (current_state == I2C_STATE_DONE)
-    {
     }
 
     else if (current_state == I2C_STATE_ERROR)
