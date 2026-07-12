@@ -3,6 +3,7 @@
 #include "i2c.h"
 #include "stm32f411.h"
 #include "core_cm4.h"
+#include "systick.h"
 
 void I2C_Reinit(void)
 {
@@ -250,6 +251,11 @@ void I2C1_EV_IRQHandler(void)
         case I2C_TX_RX:
             if (hi2c.phase == I2C_TX_RX_WRITE)
             {
+                // enable ITBUFEN
+                if (hi2c.RxLength == 1 || hi2c.RxLength >= 3)
+                {
+                    hi2c.Instance->CR2 |= (1 << 10);
+                }
                 // repeated start
                 hi2c.Instance->CR1 |= (1 << 8);
                 // reset index
@@ -462,33 +468,33 @@ void I2C1_ER_IRQHandler(void)
     return;
 }
 
-static uint8_t I2C_Validate_Pins(I2C_HandleTypeDef *hi2c)
+static uint8_t I2C_Validate_Pins()
 {
-    if (hi2c->channel == I2C_CHANNEL_1)
+    if (hi2c.channel == I2C_CHANNEL_1)
     {
-        if (hi2c->scl_port == GPIOB && hi2c->sda_port == GPIOB)
+        if (hi2c.scl_port == GPIOB && hi2c.sda_port == GPIOB)
         {
-            if ((hi2c->scl_pin == 6 || hi2c->scl_pin == 8) && (hi2c->sda_pin == 7 || hi2c->sda_pin == 9))
+            if ((hi2c.scl_pin == 6 || hi2c.scl_pin == 8) && (hi2c.sda_pin == 7 || hi2c.sda_pin == 9))
             {
                 return 1;
             }
         }
     }
-    else if (hi2c->channel == I2C_CHANNEL_2)
+    else if (hi2c.channel == I2C_CHANNEL_2)
     {
-        if (hi2c->scl_port == GPIOB && hi2c->sda_port == GPIOB)
+        if (hi2c.scl_port == GPIOB && hi2c.sda_port == GPIOB)
         {
-            if ((hi2c->scl_pin == 10) && (hi2c->sda_pin == 3 || hi2c->sda_pin == 9))
+            if ((hi2c.scl_pin == 10) && (hi2c.sda_pin == 3 || hi2c.sda_pin == 9))
             {
                 return 1;
             }
         }
     }
-    else if (hi2c->channel == I2C_CHANNEL_3)
+    else if (hi2c.channel == I2C_CHANNEL_3)
     {
-        if (hi2c->scl_port == GPIOA && hi2c->sda_port == GPIOB)
+        if (hi2c.scl_port == GPIOA && hi2c.sda_port == GPIOB)
         {
-            if ((hi2c->scl_pin == 8) && (hi2c->sda_pin == 4 || hi2c->sda_pin == 8))
+            if ((hi2c.scl_pin == 8) && (hi2c.sda_pin == 4 || hi2c.sda_pin == 8))
             {
                 return 1;
             }
@@ -504,7 +510,7 @@ static uint8_t I2C_Validate_Pins(I2C_HandleTypeDef *hi2c)
 
 void I2C_Init()
 {
-    if ((hi2c.channel >= I2C_CHANNEL_MAX) || !I2C_Validate_Pins(hi2c))
+    if ((hi2c.channel >= I2C_CHANNEL_MAX) || !I2C_Validate_Pins())
     {
         return;
     }
@@ -512,7 +518,7 @@ void I2C_Init()
     /* ----- I2C Choosing ----- */
     if (hi2c.channel == 1)
     {
-        hi2c->Instance = I2C1;
+        hi2c.Instance = I2C1;
     }
     else if (hi2c.channel == 2)
     {
@@ -708,46 +714,6 @@ void I2C_Init()
     I2C->CR2 |= (1 << 9);
 
     // the ITBUFEN will be enabled dynamically when we are actively ready to transmit or receive bytes
-}
-
-static uint8_t I2C_PollHardwareFlags(I2C_RegDef_t *I2C, I2C_Bit_Masks_t bit_mask)
-{
-    while (1)
-    {
-        uint32_t sr1_snap = I2C->SR1;
-
-        // firstly, check the error flags
-        if (sr1_snap & ((1 << 11) | (1 << 10) | (1 << 9) | (1 << 8)))
-        {
-            uint32_t cr1_snap = I2C->CR1;
-
-            sr1_snap &= ~((1 << 11) | (1 << 10) | (1 << 9) | (1 << 8));
-
-            // if there are errors, clear the error flags by writing 0 to them
-            I2C->SR1 = sr1_snap;
-
-            uint32_t cr1_modified = cr1_snap;
-
-            // set the STOP bit to 1
-            cr1_modified |= (1 << 9);
-            // set the ACK bit to 1
-            cr1_modified |= (1 << 10);
-            // clear the POS bit
-            cr1_modified &= ~(1 << 11);
-
-            // direct write of the modified CR1 to I2C->CR1
-            I2C->CR1 = cr1_modified;
-
-            return 1;
-        }
-
-        // secondly, check the bit
-        if (sr1_snap & bit_mask)
-        {
-            // if the bit is set, exit the loop
-            return 0;
-        }
-    }
 }
 
 uint8_t I2C_PollHardwareBusy(I2C_RegDef_t *I2C)
