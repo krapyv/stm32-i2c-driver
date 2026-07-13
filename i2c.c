@@ -718,28 +718,44 @@ void I2C_Init()
 
 uint8_t I2C_PollHardwareBusy(I2C_RegDef_t *I2C)
 {
+    uint32_t start = SysTick_GetTick();
+
     while (1)
     {
-        uint32_t sr1_snap = I2C->SR1;
-        uint32_t sr2_snap = I2C->SR2;
 
-        // firstly, check the error flags
-        if (sr1_snap & ((1 << 10) | (1 << 9) | (1 << 8)))
+        while ((SysTick_GetTick() - start) <= 4)
         {
-            // if there are errors, clear the error flags by writing 0 to them
-            I2C->SR1 &= ~((1 << 10) | (1 << 9) | (1 << 8));
+            uint32_t sr1_snap = I2C->SR1;
+            uint32_t sr2_snap = I2C->SR2;
+            // firstly, check the error flags
+            if (sr1_snap & ((1 << 10) | (1 << 9) | (1 << 8)))
+            {
+                // if there are errors, clear the error flags by writing 0 to them
+                I2C->SR1 &= ~((1 << 10) | (1 << 9) | (1 << 8));
 
-            // generate STOP condition to gracefuly and safely release the lines
-            I2C->CR1 |= (1 << 9);
+                // generate STOP condition to gracefuly and safely release the lines
+                I2C->CR1 |= (1 << 9);
 
-            return 1;
+                return 1;
+            }
+
+            if (!(sr2_snap & (1 << 1)))
+            {
+                // if the BUSY bit is 0, exit the loop
+                return 0;
+            }
         }
 
-        if (!(sr2_snap & (1 << 1)))
-        {
-            // if the BUSY bit is 0, exit the loop
-            return 0;
-        }
+        // if timeout is over and the function does not exit
+        // the bus is stuck
+
+        __disable_irq();
+        hi2c.error_code = I2C_ERROR_BERR;
+        hi2c.Instance->CR1 |= (1 << 15);
+        hi2c.state = I2C_STATE_ERROR;
+        __enable_irq();
+
+        return 1;
     }
 }
 
@@ -756,7 +772,6 @@ I2C_Status_t I2C_Master_Transmit(uint8_t slave_addr, uint8_t *data, uint8_t leng
     hi2c.mode = I2C_TX;
     hi2c.index = 0;
     hi2c.error_code = 0;
-    hi2c.state = I2C_STATE_TX_ADDR;
 
     // wait until the bus is completely idle (BUSY = 0)
     if (I2C_PollHardwareBusy(hi2c.Instance))
@@ -764,6 +779,7 @@ I2C_Status_t I2C_Master_Transmit(uint8_t slave_addr, uint8_t *data, uint8_t leng
         return I2C_ERROR;
     }
 
+    hi2c.state = I2C_STATE_TX_ADDR;
     // start the transaction by issuing START (set to 1)
     hi2c.Instance->CR1 |= (1 << 8);
     // START is cleared by hardware when start is sent
@@ -784,7 +800,6 @@ I2C_Status_t I2C_Master_Receive(uint8_t slave_addr, uint8_t *data, uint8_t lengt
     hi2c.mode = I2C_RX;
     hi2c.index = 0;
     hi2c.error_code = 0;
-    hi2c.state = I2C_STATE_RX_ADDR;
 
     // wait until the bus is completely idle (BUSY = 0)
     if (I2C_PollHardwareBusy(hi2c.Instance))
@@ -792,6 +807,7 @@ I2C_Status_t I2C_Master_Receive(uint8_t slave_addr, uint8_t *data, uint8_t lengt
         return I2C_ERROR;
     }
 
+    hi2c.state = I2C_STATE_RX_ADDR;
     // Master issues the Start
     hi2c.Instance->CR1 |= (1 << 8);
     // hardware clears it after the start is sent
@@ -815,7 +831,6 @@ I2C_Status_t I2C_Master_Transmit_Receive(uint8_t slave_addr, uint8_t *pSend, uin
     hi2c.phase = I2C_TX_RX_WRITE;
     hi2c.index = 0;
     hi2c.error_code = 0;
-    hi2c.state = I2C_STATE_TX_ADDR;
 
     // wait until the bus is completely idle (BUSY == 0)
     if (I2C_PollHardwareBusy(hi2c.Instance))
@@ -823,6 +838,7 @@ I2C_Status_t I2C_Master_Transmit_Receive(uint8_t slave_addr, uint8_t *pSend, uin
         return I2C_ERROR;
     }
 
+    hi2c.state = I2C_STATE_TX_ADDR;
     // Master issues the Start condition
     hi2c.Instance->CR1 |= (1 << 8);
     // the hardware clears this bit when the start is sent
