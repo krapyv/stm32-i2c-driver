@@ -142,6 +142,9 @@ void I2C1_EV_IRQHandler(void)
 
                 // then set the STOP to 1, because since we have 1 byte to get, we need the STOP immediately after it
                 hi2c.Instance->CR1 |= (1 << 9);
+
+                // enable ITBUFEN
+                hi2c.Instance->CR2 |= (1 << 10);
             }
             // N = 2 case
             else if (hi2c.RxLength == 2)
@@ -167,9 +170,11 @@ void I2C1_EV_IRQHandler(void)
                 // read SR2, since SR1 has already been read
                 dummy = hi2c.Instance->SR2;
                 (void)dummy;
+
+                // enable ITBUFEN
+                hi2c.Instance->CR2 |= (1 << 10);
             }
-            // enable ITBUFEN
-            hi2c.Instance->CR2 |= (1 << 10);
+
             break;
         }
     }
@@ -245,6 +250,16 @@ void I2C1_EV_IRQHandler(void)
 
                     hi2c.state = I2C_STATE_FINISHING;
                 }
+                else
+                {
+                    // fallback
+                    // the byte is in DR, the byte is in the shift register, but it is not tail end indexes
+
+                    // read the byte in DR
+                    hi2c.pRxBuffPtr[hi2c.index] = hi2c.Instance->DR;
+
+                    hi2c.index++;
+                }
             }
             break;
 
@@ -266,7 +281,7 @@ void I2C1_EV_IRQHandler(void)
             }
             else if (hi2c.phase == I2C_TX_RX_READ)
             {
-                // no BTF is possible (shift register never fills with nothing behind it)
+                // N = 1: no BTF is possible (shift register never fills with nothing behind it)
                 // N = 2 case
                 if (hi2c.RxLength == 2)
                 {
@@ -319,6 +334,17 @@ void I2C1_EV_IRQHandler(void)
                         hi2c.Instance->CR1 |= (1 << 10);
 
                         hi2c.state = I2C_STATE_FINISHING;
+                    }
+
+                    else
+                    {
+                        // fallback
+                        // the byte is in DR, the byte is in the shift register, but it is not tail end indexes
+
+                        // read the byte in DR
+                        hi2c.pRxBuffPtr[hi2c.index] = hi2c.Instance->DR;
+
+                        hi2c.index++;
                     }
                 }
             }
