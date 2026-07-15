@@ -731,6 +731,12 @@ void I2C_Init()
     // ISER[1] pos 1
     NVIC->ISER[1] = (1 << 0);
 
+    // set priorities
+    // EV = 5, ER = 6
+    // range: 0 (highest), 15 (lowest)
+    NVIC->IPR[31] = (5U << 4);
+    NVIC->IPR[32] = (6U << 4);
+
     /* ----- Interrupts enablement (CR2) -----*/
 
     // set ITERREN (Error interrupt enable) Bit 8 to 1
