@@ -112,7 +112,7 @@ void I2C1_EV_IRQHandler(void)
         }
     }
     // ADDR bit 1 in SR1 caused interrupt
-    else if (sr1_snapshot & (1 << 1))
+    if (sr1_snapshot & (1 << 1))
     {
         switch (hi2c.state)
         {
@@ -180,7 +180,7 @@ void I2C1_EV_IRQHandler(void)
     }
     // BTF bit 2 in SR1 caused interrupt
     // we are checking if the BTF is set
-    else if (sr1_snapshot & (1 << 2))
+    if (sr1_snapshot & (1 << 2))
     {
         switch (hi2c.mode)
         {
@@ -352,8 +352,10 @@ void I2C1_EV_IRQHandler(void)
             break;
         }
     }
+
+    sr1_snapshot = hi2c.Instance->SR1;
     // RxNE bit 6 in SR1 caused interrupt
-    else if (sr1_snapshot & (1 << 6))
+    if (sr1_snapshot & (1 << 6))
     {
 
         if (hi2c.RxLength == 1)
