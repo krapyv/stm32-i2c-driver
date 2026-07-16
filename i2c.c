@@ -112,7 +112,7 @@ void I2C1_EV_IRQHandler(void)
         }
     }
     // ADDR bit 1 in SR1 caused interrupt
-    if (sr1_snapshot & (1 << 1))
+    else if (sr1_snapshot & (1 << 1))
     {
         switch (hi2c.state)
         {
@@ -180,7 +180,7 @@ void I2C1_EV_IRQHandler(void)
     }
     // BTF bit 2 in SR1 caused interrupt
     // we are checking if the BTF is set
-    if (sr1_snapshot & (1 << 2))
+    else if (sr1_snapshot & (1 << 2))
     {
         switch (hi2c.mode)
         {
@@ -192,6 +192,15 @@ void I2C1_EV_IRQHandler(void)
                 hi2c.Instance->CR1 |= (1 << 9);
 
                 hi2c.state = I2C_STATE_FINISHING;
+            }
+            else
+            {
+                if (hi2c.index == hi2c.TxLength - 1)
+                {
+                    // disable ITBUFEN
+                    hi2c.Instance->CR2 &= ~(1 << 10);
+                }
+                hi2c.Instance->DR = hi2c.pTxBuffPtr[hi2c.index++];
             }
             break;
 
@@ -353,9 +362,8 @@ void I2C1_EV_IRQHandler(void)
         }
     }
 
-    sr1_snapshot = hi2c.Instance->SR1;
     // RxNE bit 6 in SR1 caused interrupt
-    if (sr1_snapshot & (1 << 6))
+    else if (sr1_snapshot & (1 << 6))
     {
 
         if (hi2c.RxLength == 1)
@@ -803,6 +811,8 @@ I2C_Status_t I2C_Master_Transmit(uint8_t slave_addr, uint8_t *data, uint8_t leng
     hi2c.slave_add = slave_addr;
     hi2c.pTxBuffPtr = data;
     hi2c.TxLength = length;
+    hi2c.pRxBuffPtr = NULL;
+    hi2c.RxLength = 0;
     hi2c.mode = I2C_TX;
     hi2c.index = 0;
     hi2c.error_code = 0;
@@ -831,6 +841,8 @@ I2C_Status_t I2C_Master_Receive(uint8_t slave_addr, uint8_t *data, uint8_t lengt
     hi2c.slave_add = slave_addr;
     hi2c.pRxBuffPtr = data;
     hi2c.RxLength = length;
+    hi2c.TxLength = 0;
+    hi2c.pTxBuffPtr = NULL;
     hi2c.mode = I2C_RX;
     hi2c.index = 0;
     hi2c.error_code = 0;
