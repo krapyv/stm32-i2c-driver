@@ -32,6 +32,7 @@ typedef enum
 {
     I2C_STATE_IDLE = 0,
     I2C_STATE_ERROR,
+    I2C_STATE_START_PENDING,
     I2C_STATE_TX_ADDR,
     I2C_STATE_RX_ADDR,
     I2C_STATE_FINISHING,
@@ -80,6 +81,8 @@ typedef struct
     volatile uint8_t *pRxBuffPtr;
     volatile uint8_t RxLength;
 
+    uint32_t sb_hits;
+    uint32_t stop_hits;
     I2C_RegDef_t *Instance;
 } I2C_HandleTypeDef;
 
