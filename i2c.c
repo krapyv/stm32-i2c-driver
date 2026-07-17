@@ -68,7 +68,7 @@ void I2C_Reinit(void)
 void I2C1_EV_IRQHandler(void)
 {
     // if the state is ERROR, return
-    if ((hi2c.state == I2C_STATE_ERROR) || (hi2c.state == I2C_STATE_IDLE))
+    if ((hi2c.state == I2C_STATE_ERROR) || (hi2c.state == I2C_STATE_IDLE) || (hi2c.state == I2C_STATE_DONE) || (hi2c.state == I2C_STATE_FINISHING))
     {
         return;
     }
