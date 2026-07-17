@@ -370,6 +370,7 @@ void I2C1_EV_IRQHandler(void)
 
         if (hi2c.RxLength == 1)
         {
+            hi2c.stop_hits++;
             // stop is already set after the clearing of the ADDR
 
             // read the byte
