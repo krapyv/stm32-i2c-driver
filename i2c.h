@@ -83,6 +83,8 @@ typedef struct
 
     uint32_t sb_hits;
     uint32_t stop_hits;
+    uint32_t start_pending_hits;
+
     I2C_RegDef_t *Instance;
 } I2C_HandleTypeDef;
 

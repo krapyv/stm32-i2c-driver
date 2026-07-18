@@ -183,6 +183,27 @@ void I2C1_EV_IRQHandler(void)
     // we are checking if the BTF is set
     else if (sr1_snapshot & (1 << 2))
     {
+        // START was issued, but still unconfirmed
+
+        // since the BTF flag is cleared by hardware once START or STOP condition is detected on the bus
+        // and in I2C_TX_RX case we are not explicitly clearing the BTF but just issuing the REPEATED START
+        // after the ISR exit, the BTF flag is still set.
+        // the ISR immediately reenters itself and hits the BTF once again for the same stale BTF flag
+
+        // the guard discards all the stale BTF entries
+        // the REPEATED START races a stale BTF 9 times out of 19 per cycles
+
+        // the I2C_Master_* functions that issue START have I2C_PollHardwareBusy that takes up to 4 ms of time, so there are almost no races at all
+        // the ISR issuing START has no time-buffer at all
+
+        // the issue is just frequent and cosmetical, no side effects if the guard is present
+        // TODO: see the timing issue and try to solve it
+        if (hi2c.state == I2C_STATE_START_PENDING)
+        {
+            hi2c.start_pending_hits++;
+            return;
+        }
+
         switch (hi2c.mode)
         {
         case I2C_TX:
@@ -289,6 +310,8 @@ void I2C1_EV_IRQHandler(void)
 
                 // flip the phase value
                 hi2c.phase = I2C_TX_RX_READ;
+
+                hi2c.state = I2C_STATE_START_PENDING;
             }
             else if (hi2c.phase == I2C_TX_RX_READ)
             {
@@ -856,7 +879,7 @@ I2C_Status_t I2C_Master_Receive(uint8_t slave_addr, uint8_t *data, uint8_t lengt
         return I2C_ERROR;
     }
 
-    hi2c.state = I2C_STATE_RX_ADDR;
+    hi2c.state = I2C_STATE_START_PENDING;
     // Master issues the Start
     hi2c.Instance->CR1 |= (1 << 8);
     // hardware clears it after the start is sent
@@ -887,7 +910,7 @@ I2C_Status_t I2C_Master_Transmit_Receive(uint8_t slave_addr, uint8_t *pSend, uin
         return I2C_ERROR;
     }
 
-    hi2c.state = I2C_STATE_TX_ADDR;
+    hi2c.state = I2C_STATE_START_PENDING;
     // Master issues the Start condition
     hi2c.Instance->CR1 |= (1 << 8);
     // the hardware clears this bit when the start is sent
