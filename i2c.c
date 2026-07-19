@@ -566,10 +566,6 @@ static uint8_t I2C_Validate_Pins()
     return 0;
 }
 
-// TODO: timeout mechanism via hi2c->get_tick_ms function pointer
-// curretly spins indefinitely if hardware becomes unresponsive
-// must be implemented before production use
-
 void I2C_Init()
 {
     if ((hi2c.channel >= I2C_CHANNEL_MAX) || !I2C_Validate_Pins())
