@@ -81,9 +81,9 @@ typedef struct
     volatile uint8_t *pRxBuffPtr;
     volatile uint8_t RxLength;
 
-    uint32_t sb_hits;
-    uint32_t stop_hits;
-    uint32_t start_pending_hits;
+    volatile uint32_t sb_hits;
+    volatile uint32_t stop_hits;
+    volatile uint32_t start_pending_hits;
 
     I2C_RegDef_t *Instance;
 } I2C_HandleTypeDef;
