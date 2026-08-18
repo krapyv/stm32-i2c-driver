@@ -1,3 +1,6 @@
 [submodule "core"]
 	path = core
 	url = git@github.com:krapyv/stm32f411-core.git
+[submodule "systick"]
+	path = systick
+	url = git@github.com:krapyv/stm32-systick-driver.git

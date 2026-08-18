@@ -2,7 +2,7 @@
 #include <stdio.h>
 #include "i2c.h"
 #include "core/core_cm4.h"
-#include "systick.h"
+#include "systick/systick.h"
 
 void I2C_Reinit(void)
 {
