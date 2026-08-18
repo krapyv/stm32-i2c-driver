@@ -1,8 +1,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include "i2c.h"
-#include "stm32f411.h"
-#include "core_cm4.h"
+#include "core/core_cm4.h"
 #include "systick.h"
 
 void I2C_Reinit(void)

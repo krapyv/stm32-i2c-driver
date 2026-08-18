@@ -2,7 +2,7 @@
 #define I2C_H
 
 #include <stdint.h>
-#include "stm32f411.h"
+#include "core/stm32f411.h"
 
 typedef enum
 {
