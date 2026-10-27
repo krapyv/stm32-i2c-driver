@@ -63,21 +63,30 @@ void I2C_Reinit(void)
     hi2c.Instance->CR2 |= (1 << 9);
 }
 
-void I2C_Cleanup()
+void I2C_Cleanup(void)
 {
+    // set the hi2c.state to IDLE
+    hi2c.state = I2C_STATE_IDLE;
+
     // request STOP
     hi2c.Instance->CR1 |= (1UL << 9U);
 
+    uint32_t timeout_start = SysTick_GetTick();
+
+    // check if the bus is busy
+    // the bit BUSY (bit 1) of I2C_SR2 cleared by hardware on detection of a Stop Condition
+    while ((hi2c.Instance->SR2 & (1UL << 1U)) && (SysTick_GetTick() - timeout_start < 2U))
+    {
+    }
+
     // issue SWRST (Software reset)
+    // the I2C lines should be released and the bus should be free
     hi2c.Instance->CR1 |= (1UL << 15U);
 
     // clear SWRST
     hi2c.Instance->CR1 &= ~(1UL << 15U);
 
     I2C_Reinit();
-
-    // set the hi2c.state to IDLE
-    hi2c.state = I2C_STATE_IDLE;
 
     // set other variables to their default values
     hi2c.index = 0;
