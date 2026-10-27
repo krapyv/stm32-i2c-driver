@@ -63,6 +63,28 @@ void I2C_Reinit(void)
     hi2c.Instance->CR2 |= (1 << 9);
 }
 
+void I2C_Cleanup()
+{
+    // request STOP
+    hi2c.Instance->CR1 |= (1UL << 9U);
+
+    // issue SWRST (Software reset)
+    hi2c.Instance->CR1 |= (1UL << 15U);
+
+    // clear SWRST
+    hi2c.Instance->CR1 &= ~(1UL << 15U);
+
+    I2C_Reinit();
+
+    // set the hi2c.state to IDLE
+    hi2c.state = I2C_STATE_IDLE;
+
+    // set other variables to their default values
+    hi2c.index = 0;
+    hi2c.phase = I2C_TX_RX_WRITE;
+    hi2c.mode = I2C_TX;
+}
+
 // Events Interrupt Handler (priority 38 - cannot be preempted by I2C1_ER)
 void I2C1_EV_IRQHandler(void)
 {
