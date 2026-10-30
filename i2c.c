@@ -4,6 +4,23 @@
 #include "core/core_cm4.h"
 #include "systick/systick.h"
 
+#if (I2C_MODE == I2C_DEBUG_MODE)
+static volatile uint32_t af_i2c_error_counter = 0;
+static volatile uint32_t arlo_i2c_error_counter = 0;
+static volatile uint32_t berr_i2c_error_counter = 0;
+
+typedef struct
+{
+    uint32_t cyccnt;
+    uint32_t sr1;
+    I2C_State_t state;
+} I2C_Test_t;
+
+volatile I2C_Test_t error_tracing[16];
+volatile uint8_t error_index;
+
+#endif
+
 void I2C_Reinit(void)
 {
     // explicitly disable PE (bit 0 CR1) to prevet undefined hardware behavior
@@ -104,6 +121,13 @@ void I2C1_EV_IRQHandler(void)
     }
 
     uint16_t sr1_snapshot = hi2c.Instance->SR1;
+
+#if (I2C_MODE == I2C_DEBUG_MODE)
+    I2C_Test_t error = {.cyccnt = DWT->CYCCNT, .sr1 = sr1_snapshot, .state = hi2c.state};
+    error_tracing[error_index % 16] = error;
+
+    error_index++;
+#endif
     uint16_t cr1_snapshot = hi2c.Instance->CR1;
     uint16_t cr2_snapshot = hi2c.Instance->CR2;
     uint32_t dummy = 0;
@@ -271,12 +295,6 @@ void I2C1_EV_IRQHandler(void)
                 hi2c.pRxBuffPtr[0] = hi2c.Instance->DR; // byte 1
                 hi2c.pRxBuffPtr[1] = hi2c.Instance->DR; // byte 2
 
-                // after both bytes have been read, clear POS
-                hi2c.Instance->CR1 &= ~(1 << 11);
-
-                // after all bytes have been read, re-enable the ACK bit in CR1
-                hi2c.Instance->CR1 |= (1 << 10);
-
                 hi2c.state = I2C_STATE_FINISHING;
             }
             else if (hi2c.RxLength >= 3)
@@ -306,9 +324,6 @@ void I2C1_EV_IRQHandler(void)
                     hi2c.pRxBuffPtr[hi2c.index++] = hi2c.Instance->DR; // N - 1
 
                     hi2c.pRxBuffPtr[hi2c.index] = hi2c.Instance->DR; // N
-
-                    // after all bytes have been read, re-enable the ACK bit in CR1
-                    hi2c.Instance->CR1 |= (1 << 10);
 
                     hi2c.state = I2C_STATE_FINISHING;
                 }
@@ -358,12 +373,6 @@ void I2C1_EV_IRQHandler(void)
                     hi2c.pRxBuffPtr[0] = hi2c.Instance->DR; // byte 1
                     hi2c.pRxBuffPtr[1] = hi2c.Instance->DR; // byte 2
 
-                    // after both bytes have been read, clear POS
-                    hi2c.Instance->CR1 &= ~(1 << 11);
-
-                    // after all bytes have been read, re-enable the ACK bit in CR1
-                    hi2c.Instance->CR1 |= (1 << 10);
-
                     hi2c.state = I2C_STATE_FINISHING;
                 }
                 else if (hi2c.RxLength >= 3)
@@ -393,9 +402,6 @@ void I2C1_EV_IRQHandler(void)
                         hi2c.pRxBuffPtr[hi2c.index++] = hi2c.Instance->DR; // N - 1
 
                         hi2c.pRxBuffPtr[hi2c.index] = hi2c.Instance->DR; // N
-
-                        // after all bytes have been read, re-enable the ACK bit in CR1
-                        hi2c.Instance->CR1 |= (1 << 10);
 
                         hi2c.state = I2C_STATE_FINISHING;
                     }
@@ -428,9 +434,6 @@ void I2C1_EV_IRQHandler(void)
 
             // read the byte
             hi2c.pRxBuffPtr[0] = hi2c.Instance->DR;
-
-            // enabled ACK
-            hi2c.Instance->CR1 |= (1 << 10);
 
             // ITBUFEN is not disabled
 
@@ -491,6 +494,9 @@ void I2C1_ER_IRQHandler(void)
     // error code checking branches
     if (hi2c.error_code & I2C_ERROR_BERR)
     {
+#if (I2C_MODE == I2C_DEBUG_MODE)
+        berr_i2c_error_counter++;
+#endif
         // needs SWRST hard reset
 
         // since I immediately enable SWRST, there is no explicit SR1 error flag clearing
@@ -510,6 +516,9 @@ void I2C1_ER_IRQHandler(void)
     {
         if (hi2c.error_code & I2C_ERROR_ARLO)
         {
+#if (I2C_MODE == I2C_DEBUG_MODE)
+            arlo_i2c_error_counter++;
+#endif
             // needs to wait until the current transmission is over because the another master seized the bus
 
             // clear the SR1 ARLO error flag
@@ -521,6 +530,9 @@ void I2C1_ER_IRQHandler(void)
         }
         if (hi2c.error_code & I2C_ERROR_AF)
         {
+#if (I2C_MODE == I2C_DEBUG_MODE)
+            af_i2c_error_counter++;
+#endif
             // needs to issue STOP and then try the communication again
 
             // make snapshot of current CR1
@@ -962,6 +974,10 @@ void I2C_PollStopConfirmation()
 
     if (success)
     {
+        // enabled ACK
+        hi2c.Instance->CR1 |= (1 << 10);
+        // clear POS
+        hi2c.Instance->CR1 &= ~(1 << 11);
         hi2c.state = I2C_STATE_DONE;
     }
     else
