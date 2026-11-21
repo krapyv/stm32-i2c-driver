@@ -129,7 +129,10 @@ void I2C1_EV_IRQHandler(void)
     error_index++;
 #endif
     uint16_t cr1_snapshot = hi2c.Instance->CR1;
+    (void)cr1_snapshot;
     uint16_t cr2_snapshot = hi2c.Instance->CR2;
+    (void)cr2_snapshot;
+
     uint32_t dummy = 0;
 
     // SB bit 0 in SR1 caused interrupt
@@ -992,9 +995,6 @@ void I2C_PollStopConfirmation()
 
 void I2C_Process(void)
 {
-    // Firstly read index, then state
-    uint8_t current_index = hi2c.index;
-
     I2C_State_t current_state = hi2c.state;
 
     if (current_state == I2C_STATE_FINISHING)
