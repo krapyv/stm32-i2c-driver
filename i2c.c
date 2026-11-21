@@ -2,7 +2,7 @@
 #include <stdio.h>
 #include "i2c.h"
 #include "core/core_cm4.h"
-#include "systick/systick.h"
+#include "osal/osal_time.h"
 
 #if (I2C_MODE == I2C_DEBUG_MODE)
 static volatile uint32_t af_i2c_error_counter = 0;
@@ -88,11 +88,11 @@ void I2C_Cleanup(void)
     // request STOP
     hi2c.Instance->CR1 |= (1UL << 9U);
 
-    uint32_t timeout_start = SysTick_GetTick();
+    uint32_t timeout_start = osal_get_ms();
 
     // check if the bus is busy
     // the bit BUSY (bit 1) of I2C_SR2 cleared by hardware on detection of a Stop Condition
-    while ((hi2c.Instance->SR2 & (1UL << 1U)) && (SysTick_GetTick() - timeout_start < 2U))
+    while ((hi2c.Instance->SR2 & (1UL << 1U)) && (osal_get_ms() - timeout_start < 2U))
     {
     }
 
@@ -824,9 +824,9 @@ void I2C_Init()
 
 uint8_t I2C_PollHardwareBusy(I2C_RegDef_t *I2C)
 {
-    uint32_t start = SysTick_GetTick();
+    uint32_t start = osal_get_ms();
 
-    while ((SysTick_GetTick() - start) <= 4)
+    while ((osal_get_ms() - start) <= 4)
     {
         uint32_t sr1_snap = I2C->SR1;
         uint32_t sr2_snap = I2C->SR2;
@@ -958,10 +958,10 @@ I2C_Status_t I2C_Master_Transmit_Receive(uint8_t slave_addr, uint8_t *pSend, uin
 
 void I2C_PollStopConfirmation()
 {
-    uint32_t start = SysTick_GetTick();
+    uint32_t start = osal_get_ms();
     uint8_t success = 0;
 
-    while ((SysTick_GetTick() - start) <= 2)
+    while ((osal_get_ms() - start) <= 2)
     {
         // BUSY bit 1 polling
         if (!(hi2c.Instance->SR2 & (1 << 1)))
@@ -1015,9 +1015,9 @@ void I2C_Process(void)
             uint32_t sda_val = 0;
             uint32_t scl_val = 0;
 
-            uint32_t start = SysTick_GetTick();
+            uint32_t start = osal_get_ms();
 
-            while ((SysTick_GetTick() - start) <= 2)
+            while ((osal_get_ms() - start) <= 2)
             {
                 sda_val = hi2c.sda_port->IDR & (1 << hi2c.sda_pin);
                 scl_val = hi2c.scl_port->IDR & (1 << hi2c.scl_pin);
